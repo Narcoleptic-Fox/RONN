@@ -2,10 +2,14 @@
 //
 // Provides a simple, ergonomic interface for loading models and running inference.
 
+pub mod async_session;
+pub mod batch;
 mod error;
 mod model;
 mod session;
 
+pub use async_session::{AsyncBatchProcessor, AsyncSession};
+pub use batch::{BatchConfig, BatchProcessor, BatchRequest, BatchStats, BatchStrategy};
 pub use error::{Error, Result};
 pub use model::Model;
 pub use session::{InferenceSession, SessionBuilder, SessionOptions};

@@ -8,6 +8,7 @@ members = [
     "crates/ronn-learning",
     "crates/ronn-onnx",
     "crates/ronn-api",
+    "crates/ronn-python",
     "examples/*",
     "tests/integration"
 ]
@@ -58,6 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Memory and performance
 hnsw = "0.11"
 memmap2 = "0.9"
+once_cell = "1.19"
 
 # Async and networking
 reqwest = { version = "0.11", features = ["json"] }
@@ -85,6 +87,10 @@ getrandom = { version = "0.2", features = ["js"] }
 # Custom hardware provider support
 dlopen2 = "0.7"
 libloading = "0.8"
+
+# Python bindings
+pyo3 = "0.20"
+numpy = "0.20"
 
 [workspace.lints.rust]
 missing_docs = "warn"

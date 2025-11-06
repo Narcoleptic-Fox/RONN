@@ -139,3 +139,91 @@ impl OnnxOperator for GeluOp {
         Ok(vec![result])
     }
 }
+
+// LeakyReLU: max(alpha * x, x)
+pub struct LeakyReluOp;
+
+impl OnnxOperator for LeakyReluOp {
+    fn op_type(&self) -> &str {
+        "LeakyRelu"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "LeakyRelu expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let alpha = if let Some(NodeAttribute::Float(a)) = attributes.get("alpha") {
+            *a as f32
+        } else {
+            0.01  // Default alpha
+        };
+
+        let result = inputs[0].leaky_relu(alpha)?;
+        Ok(vec![result])
+    }
+}
+
+// ELU: Exponential Linear Unit
+// ELU(x) = x if x > 0, else alpha * (exp(x) - 1)
+pub struct EluOp;
+
+impl OnnxOperator for EluOp {
+    fn op_type(&self) -> &str {
+        "Elu"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Elu expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let alpha = if let Some(NodeAttribute::Float(a)) = attributes.get("alpha") {
+            *a as f32
+        } else {
+            1.0  // Default alpha
+        };
+
+        let result = inputs[0].elu(alpha)?;
+        Ok(vec![result])
+    }
+}
+
+// Swish/SiLU: x * sigmoid(x)
+pub struct SwishOp;
+
+impl OnnxOperator for SwishOp {
+    fn op_type(&self) -> &str {
+        "Swish"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        _attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Swish expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let result = inputs[0].swish()?;
+        Ok(vec![result])
+    }
+}

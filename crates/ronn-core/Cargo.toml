@@ -19,6 +19,7 @@ candle-nn.workspace = true
 
 # Serialization
 serde.workspace = true
+serde_json.workspace = true
 uuid.workspace = true
 
 # Error handling
@@ -34,6 +35,9 @@ tracing.workspace = true
 # Concurrency
 dashmap.workspace = true
 tokio.workspace = true
+
+# Memory management
+once_cell.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
