@@ -616,7 +616,164 @@ impl Tensor {
 
         Ok(Self::from_candle(output, self.dtype, self.layout))
     }
+
+    /// Clip values to a range [min, max]
+    pub fn clip(&self, min: f32, max: f32) -> Result<Self> {
+        let result = self.candle_tensor.clamp(min, max)?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Element-wise power operation
+    pub fn pow(&self, exponent: &Tensor) -> Result<Self> {
+        let result = self.candle_tensor.pow(&exponent.candle_tensor)?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Element-wise square root
+    pub fn sqrt(&self) -> Result<Self> {
+        let result = self.candle_tensor.sqrt()?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Element-wise exponential (e^x)
+    pub fn exp(&self) -> Result<Self> {
+        let result = self.candle_tensor.exp()?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Element-wise natural logarithm
+    pub fn log(&self) -> Result<Self> {
+        let result = self.candle_tensor.log()?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Element-wise negation
+    pub fn neg(&self) -> Result<Self> {
+        let result = self.candle_tensor.neg()?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Element-wise absolute value
+    pub fn abs(&self) -> Result<Self> {
+        let result = self.candle_tensor.abs()?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// LeakyReLU activation: max(alpha * x, x)
+    pub fn leaky_relu(&self, alpha: f32) -> Result<Self> {
+        let scaled = (&self.candle_tensor * alpha)?;
+        let result = self.candle_tensor.maximum(&scaled)?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// ELU activation: x if x > 0 else alpha * (exp(x) - 1)
+    pub fn elu(&self, alpha: f32) -> Result<Self> {
+        // ELU(x) = x if x > 0 else alpha * (exp(x) - 1)
+        let zero = self.candle_tensor.zeros_like()?;
+        let mask = self.candle_tensor.gt(&zero)?;
+
+        let positive_part = &self.candle_tensor;
+        let exp_part = (self.candle_tensor.exp()? - 1.0)?;
+        let negative_part = (exp_part * alpha)?;
+
+        let result = mask.where_cond(positive_part, &negative_part)?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Swish/SiLU activation: x * sigmoid(x)
+    pub fn swish(&self) -> Result<Self> {
+        let sigmoid = candle_nn::ops::sigmoid(&self.candle_tensor)?;
+        let result = (&self.candle_tensor * &sigmoid)?;
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Remove dimensions of size 1
+    pub fn squeeze(&self, axes: Option<Vec<usize>>) -> Result<Self> {
+        let shape = self.shape();
+        let new_shape: Vec<usize> = if let Some(axes) = axes {
+            // Remove specific axes
+            shape
+                .iter()
+                .enumerate()
+                .filter(|(i, &dim)| !axes.contains(i) || dim != 1)
+                .map(|(_, &dim)| dim)
+                .collect()
+        } else {
+            // Remove all dimensions of size 1
+            shape.iter().copied().filter(|&dim| dim != 1).collect()
+        };
+
+        if new_shape.is_empty() {
+            // If all dimensions were 1, keep at least one
+            return self.reshape(&[1]);
+        }
+
+        self.reshape(&new_shape)
+    }
+
+    /// Add dimensions of size 1
+    pub fn unsqueeze(&self, axes: &[usize]) -> Result<Self> {
+        let mut new_shape = self.shape();
+        let mut axes_sorted = axes.to_vec();
+        axes_sorted.sort_unstable();
+
+        for &axis in &axes_sorted {
+            new_shape.insert(axis, 1);
+        }
+
+        self.reshape(&new_shape)
+    }
+
+    /// Reduce mean along axes
+    pub fn reduce_mean(&self, axes: &[usize], keepdims: bool) -> Result<Self> {
+        let mut result = self.candle_tensor.clone();
+
+        // Sort axes in descending order to maintain correct indices
+        let mut sorted_axes = axes.to_vec();
+        sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
+
+        for &axis in &sorted_axes {
+            result = result.mean_keepdim(axis)?;
+            if !keepdims {
+                result = result.squeeze(axis)?;
+            }
+        }
+
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Reduce sum along axes
+    pub fn reduce_sum(&self, axes: &[usize], keepdims: bool) -> Result<Self> {
+        let mut result = self.candle_tensor.clone();
+
+        // Sort axes in descending order to maintain correct indices
+        let mut sorted_axes = axes.to_vec();
+        sorted_axes.sort_unstable_by(|a, b| b.cmp(a));
+
+        for &axis in &sorted_axes {
+            result = result.sum_keepdim(axis)?;
+            if !keepdims {
+                result = result.squeeze(axis)?;
+            }
+        }
+
+        Ok(Self::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Cast tensor to a different data type
+    pub fn cast(&self, to: DataType) -> Result<Self> {
+        let target_dtype = dtype_to_candle(&to)?;
+        let result = self.candle_tensor.to_dtype(target_dtype)?;
+        Ok(Self::from_candle(result, to, self.layout))
+    }
+
+    /// Convert tensor to a scalar f32 value
+    pub fn to_scalar_f32(&self) -> Result<f32> {
+        let value = self.candle_tensor.to_scalar::<f32>()?;
+        Ok(value)
+    }
 }
+
 
 /// Convert RONN DataType to Candle DType.
 fn dtype_to_candle(dtype: &DataType) -> Result<DType> {
