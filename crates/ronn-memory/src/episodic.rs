@@ -1,6 +1,6 @@
 //! Episodic Memory - Experience storage with temporal indexing
 
-use crate::{MemoryId, Result, MemoryError};
+use crate::{MemoryId, Result};
 use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 

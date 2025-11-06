@@ -2,7 +2,7 @@
 
 use crate::episodic::{EpisodicMemory, Episode};
 use crate::semantic::Concept;
-use crate::{MemoryId, Result};
+use crate::Result;
 use std::collections::HashSet;
 
 /// Configuration for sleep consolidation
@@ -118,9 +118,8 @@ pub struct ConsolidationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{current_timestamp, MemoryId};
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-    use super::*;
-    use crate::current_timestamp;
     use ronn_core::tensor::Tensor;
     use ronn_core::types::{DataType, TensorLayout};
 

@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use anyhow::{anyhow, Result};
-use ronn_core::{DataType, GraphEdge, GraphNode, NodeId, SubGraph, TensorLayout};
+use ronn_core::{DataType, GraphNode, NodeId, SubGraph, TensorLayout};
 use tracing::{debug, info};
 
 /// Kernel compiler for subgraph analysis and optimization.
@@ -683,6 +683,8 @@ impl Default for KernelCompiler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ronn_core::GraphEdge;
+    use std::collections::HashMap;
 
     fn create_test_subgraph() -> SubGraph {
         let nodes = vec![

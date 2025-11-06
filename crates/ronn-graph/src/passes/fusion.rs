@@ -69,7 +69,7 @@ impl NodeFusionPass {
     }
 
     /// Find a successor node with the given op type
-    fn find_successor(graph: &ModelGraph, node_id: &str, op_type: &str) -> Option<String> {
+    fn find_successor(_graph: &ModelGraph, _node_id: &str, _op_type: &str) -> Option<String> {
         // Get the node's outputs
         // Find nodes that consume those outputs
         // Check if any match the op_type

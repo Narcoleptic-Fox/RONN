@@ -2,7 +2,7 @@
 //!
 //! Analyzes input tensors to determine their computational complexity and routing requirements.
 
-use crate::{HRMError, Result};
+use crate::Result;
 use ronn_core::tensor::Tensor;
 
 /// Levels of complexity for routing decisions

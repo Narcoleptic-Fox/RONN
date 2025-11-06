@@ -3,7 +3,7 @@
 //! This module provides a complete CPU execution provider with SIMD optimizations,
 //! multi-threading support, and NUMA awareness.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -16,7 +16,7 @@ use ronn_core::{
 use tracing::{debug, info, warn};
 
 use super::{
-    allocator::{create_cpu_allocator, create_numa_cpu_allocator, CpuMemoryAllocator},
+    allocator::{create_cpu_allocator, create_numa_cpu_allocator},
     kernels::CpuKernel,
     simd::{detect_simd_capabilities, SimdCapabilities},
 };
@@ -377,7 +377,8 @@ pub fn create_numa_cpu_provider(numa_node: i32) -> Result<Arc<dyn ExecutionProvi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ronn_core::{AttributeValue, GraphNode};
+    use ronn_core::GraphNode;
+    use std::collections::HashMap;
 
     #[test]
     fn test_provider_creation() -> Result<()> {

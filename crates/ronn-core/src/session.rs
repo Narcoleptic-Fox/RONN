@@ -92,7 +92,7 @@ impl Default for SessionStatistics {
 
 /// Resource usage tracking for sessions.
 #[derive(Debug, Clone)]
-struct ResourceUsage {
+pub struct ResourceUsage {
     /// Current memory usage in bytes.
     current_memory: usize,
     /// Peak memory usage in bytes.

@@ -1,6 +1,5 @@
 use super::{OnnxOperator, Result};
 use crate::error::OnnxError;
-use ronn_core::ops::{ArithmeticOps, ReductionOps};
 use ronn_core::NodeAttribute;
 use ronn_core::tensor::Tensor;
 use std::collections::HashMap;

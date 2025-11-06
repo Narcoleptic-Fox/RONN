@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
-use candle_core::{Device, Tensor as CandleTensor, DType, Shape};
+use candle_core::{Device, Tensor as CandleTensor};
 use ronn_core::{DataType, MemoryInfo, MemoryType, TensorAllocator, TensorBuffer};
 use tracing::{debug, warn};
 

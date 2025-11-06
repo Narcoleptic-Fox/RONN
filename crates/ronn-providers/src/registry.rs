@@ -316,7 +316,7 @@ pub struct RegistryStatistics {
 mod tests {
     use super::*;
     use ronn_core::{
-        AttributeValue, DataType, KernelStats, MemoryType, MemoryUsage, PerformanceProfile,
+        DataType, KernelStats, MemoryType, MemoryUsage, PerformanceProfile,
         ProviderConfig, ResourceRequirements, Tensor, TensorAllocator,
     };
     use std::collections::{HashMap, HashSet};

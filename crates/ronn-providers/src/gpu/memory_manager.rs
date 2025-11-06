@@ -7,9 +7,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::{anyhow, Result};
-use candle_core::{Device, Tensor as CandleTensor};
-use ronn_core::{DataType, MemoryType, TensorBuffer};
-use tracing::{debug, info, warn};
+use ronn_core::DataType;
+use tracing::{debug, info};
 
 /// Multi-GPU memory manager coordinating memory across devices.
 #[derive(Debug)]

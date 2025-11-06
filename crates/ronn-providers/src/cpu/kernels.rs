@@ -5,13 +5,14 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use rayon::prelude::*;
+// Rayon parallel iterator traits
+// use rayon::prelude::*;
 use ronn_core::tensor::Tensor;
 use ronn_core::{
-    CompiledKernel, DataType, GraphNode, KernelStats, MemoryUsage, SubGraph, TensorLayout,
+    CompiledKernel, DataType, KernelStats, MemoryUsage, SubGraph, TensorLayout,
 };
 use tracing::{debug, warn};
 
@@ -482,7 +483,7 @@ impl CompiledKernel for CpuKernel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ronn_core::{AttributeValue, GraphEdge, GraphNode};
+    use ronn_core::GraphNode;
     use std::collections::HashMap;
 
     fn create_test_subgraph() -> SubGraph {

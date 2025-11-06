@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)"
     ],
     "deny": [],
     "ask": []

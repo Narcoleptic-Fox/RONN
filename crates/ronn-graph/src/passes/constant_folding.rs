@@ -1,6 +1,6 @@
 use super::{OptimizationPass, PassStats};
 use crate::error::Result;
-use ronn_core::{ModelGraph, NodeAttribute};
+use ronn_core::ModelGraph;
 use std::collections::HashSet;
 use tracing::debug;
 
@@ -39,7 +39,7 @@ impl OptimizationPass for ConstantFoldingPass {
 
 impl ConstantFoldingPass {
     /// Check if all inputs to a node are constants
-    fn all_inputs_constant(node_id: &str, graph: &ModelGraph) -> bool {
+    fn all_inputs_constant(_node_id: &str, _graph: &ModelGraph) -> bool {
         // Check if all input tensors are initializers (constants)
         // This would require access to the initializers map
         // For now, return false (would be implemented with full graph context)

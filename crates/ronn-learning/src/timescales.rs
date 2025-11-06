@@ -1,6 +1,6 @@
 //! Multi-Timescale Learning - Fast and slow weight adaptation
 
-use crate::{LearningError, Result};
+use crate::Result;
 use ronn_core::tensor::Tensor;
 
 /// Configuration for multi-timescale learning

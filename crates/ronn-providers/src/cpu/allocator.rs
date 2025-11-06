@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use ronn_core::{DataType, MemoryInfo, MemoryType, TensorAllocator, TensorBuffer};
+use ronn_core::{DataType, MemoryInfo, TensorAllocator, TensorBuffer};
 
 use super::simd::{detect_simd_capabilities, get_optimal_vector_width, SimdCapabilities};
 use crate::allocator::{AlignedMemoryAllocator, PoolConfig, PooledMemoryAllocator};
@@ -222,6 +222,7 @@ pub fn detect_numa_nodes() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ronn_core::MemoryType;
 
     #[test]
     fn test_cpu_allocator_creation() {

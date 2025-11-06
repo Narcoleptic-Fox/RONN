@@ -16,7 +16,8 @@ use ronn_core::{
 };
 use tracing::{debug, info, warn};
 
-use super::allocator::create_gpu_allocator;
+// GPU allocator creation (may be used for custom configurations)
+// use super::allocator::create_gpu_allocator;
 use super::cuda_kernels::{CudaKernelManager, CudaCompileOptions};
 use super::memory_manager::{MultiGpuMemoryManager, MultiGpuMemoryConfig};
 use super::topology::{GpuTopologyManager, TopologyConfig};
@@ -187,7 +188,7 @@ struct MultiGpuManager {
 
 /// Statistics for individual GPU devices.
 #[derive(Debug, Default, Clone)]
-struct DeviceStats {
+pub struct DeviceStats {
     /// Number of operations executed on this device.
     operation_count: u64,
     /// Current memory usage in bytes.
@@ -1614,7 +1615,8 @@ pub fn create_gpu_provider_with_config(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ronn_core::{AttributeValue, GraphNode};
+    use ronn_core::GraphNode;
+    use std::collections::HashMap;
 
     fn create_test_subgraph() -> SubGraph {
         let node = GraphNode {

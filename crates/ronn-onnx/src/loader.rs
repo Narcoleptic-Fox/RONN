@@ -243,7 +243,6 @@ impl ModelLoader {
         let shape: Vec<usize> = tensor_proto.dims.iter().map(|&d| d as usize).collect();
 
         // Extract actual tensor data based on data type
-        use ronn_core::types::TensorLayout;
         let tensor = if !tensor_proto.raw_data.is_empty() {
             // Data is in raw_data field (packed binary)
             Self::tensor_from_raw_data(&tensor_proto.raw_data, &shape, data_type)?

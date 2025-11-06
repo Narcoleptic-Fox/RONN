@@ -33,8 +33,8 @@ pub trait OnnxOperator: Send + Sync {
     /// Validate inputs and attributes
     fn validate(
         &self,
-        inputs: &[&Tensor],
-        attributes: &HashMap<String, NodeAttribute>,
+        _inputs: &[&Tensor],
+        _attributes: &HashMap<String, NodeAttribute>,
     ) -> Result<()> {
         // Default validation - can be overridden
         Ok(())

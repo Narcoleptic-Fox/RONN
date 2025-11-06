@@ -4,7 +4,7 @@
 //! - System 1: Fast, automatic, intuitive processing (uses quantized models)
 //! - System 2: Slow, deliberate, analytical processing (uses full precision)
 
-use crate::{HRMError, Result};
+use crate::Result;
 use ronn_core::tensor::Tensor;
 
 /// Execution path selection

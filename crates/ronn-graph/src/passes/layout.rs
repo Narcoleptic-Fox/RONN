@@ -61,7 +61,7 @@ impl LayoutOptimizationPass {
     }
 
     /// Insert layout transformation nodes where needed
-    fn insert_layout_transforms(&self, graph: &mut ModelGraph, _target_layout: TensorLayout) -> Result<usize> {
+    fn insert_layout_transforms(&self, _graph: &mut ModelGraph, _target_layout: TensorLayout) -> Result<usize> {
         // Find places where layout needs to change
         // Insert Transpose nodes to convert between layouts
         // This is a simplified version

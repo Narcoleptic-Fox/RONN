@@ -1,7 +1,7 @@
 //! Elastic Weight Consolidation (EWC) - Protecting important weights
 
 use crate::timescales::WeightUpdate;
-use crate::{LearningError, Result};
+use crate::Result;
 use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 
