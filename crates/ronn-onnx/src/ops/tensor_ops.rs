@@ -262,3 +262,217 @@ impl SliceOp {
         }
     }
 }
+
+// Squeeze: remove dimensions of size 1
+pub struct SqueezeOp;
+
+impl OnnxOperator for SqueezeOp {
+    fn op_type(&self) -> &str {
+        "Squeeze"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Squeeze expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
+            Some(v.iter().map(|&x| x as usize).collect::<Vec<_>>())
+        } else {
+            None
+        };
+
+        let result = inputs[0].squeeze(axes)?;
+        Ok(vec![result])
+    }
+}
+
+// Unsqueeze: add dimensions of size 1
+pub struct UnsqueezeOp;
+
+impl OnnxOperator for UnsqueezeOp {
+    fn op_type(&self) -> &str {
+        "Unsqueeze"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Unsqueeze expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
+            v.iter().map(|&x| x as usize).collect()
+        } else {
+            return Err(OnnxError::InvalidGraph(
+                "Unsqueeze requires 'axes' attribute".to_string(),
+            ));
+        };
+
+        let result = inputs[0].unsqueeze(&axes)?;
+        Ok(vec![result])
+    }
+}
+
+// ReduceMean: compute mean along axes
+pub struct ReduceMeanOp;
+
+impl OnnxOperator for ReduceMeanOp {
+    fn op_type(&self) -> &str {
+        "ReduceMean"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "ReduceMean expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
+            v.iter().map(|&x| x as usize).collect()
+        } else {
+            // Default: reduce all dimensions
+            (0..inputs[0].shape().len()).collect()
+        };
+
+        let keepdims = if let Some(NodeAttribute::Int(v)) = attributes.get("keepdims") {
+            *v != 0
+        } else {
+            true
+        };
+
+        let result = inputs[0].reduce_mean(&axes, keepdims)?;
+        Ok(vec![result])
+    }
+}
+
+// ReduceSum: compute sum along axes
+pub struct ReduceSumOp;
+
+impl OnnxOperator for ReduceSumOp {
+    fn op_type(&self) -> &str {
+        "ReduceSum"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "ReduceSum expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
+            v.iter().map(|&x| x as usize).collect()
+        } else {
+            // Default: reduce all dimensions
+            (0..inputs[0].shape().len()).collect()
+        };
+
+        let keepdims = if let Some(NodeAttribute::Int(v)) = attributes.get("keepdims") {
+            *v != 0
+        } else {
+            true
+        };
+
+        let result = inputs[0].reduce_sum(&axes, keepdims)?;
+        Ok(vec![result])
+    }
+}
+
+// Cast: convert tensor data type
+pub struct CastOp;
+
+impl OnnxOperator for CastOp {
+    fn op_type(&self) -> &str {
+        "Cast"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 1 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Cast expects 1 input, got {}",
+                inputs.len()
+            )));
+        }
+
+        let to = if let Some(NodeAttribute::Int(v)) = attributes.get("to") {
+            // ONNX TensorProto data types
+            match v {
+                1 => ronn_core::DataType::F32,  // FLOAT
+                10 => ronn_core::DataType::F16, // FLOAT16
+                11 => ronn_core::DataType::F64, // DOUBLE
+                6 => ronn_core::DataType::I32,  // INT32
+                7 => ronn_core::DataType::I64,  // INT64
+                2 => ronn_core::DataType::U8,   // UINT8
+                _ => return Err(OnnxError::InvalidGraph(format!(
+                    "Unsupported Cast target type: {}",
+                    v
+                ))),
+            }
+        } else {
+            return Err(OnnxError::InvalidGraph(
+                "Cast requires 'to' attribute".to_string(),
+            ));
+        };
+
+        let result = inputs[0].cast(to)?;
+        Ok(vec![result])
+    }
+}
+
+// Embedding: gather operation for embedding lookup
+pub struct EmbeddingOp;
+
+impl OnnxOperator for EmbeddingOp {
+    fn op_type(&self) -> &str {
+        "Embedding"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        _attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() != 2 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Embedding expects 2 inputs (weights, indices), got {}",
+                inputs.len()
+            )));
+        }
+
+        let weights = inputs[0];  // Shape: [vocab_size, embedding_dim]
+        let indices = inputs[1];  // Shape: [batch_size, seq_len]
+
+        // Embedding is essentially a gather operation on axis 0
+        let result = weights.gather(indices, 0)?;
+        Ok(vec![result])
+    }
+}

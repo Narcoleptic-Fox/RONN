@@ -93,6 +93,9 @@ impl OperatorRegistry {
         self.register(Box::new(TanhOp));
         self.register(Box::new(SoftmaxOp));
         self.register(Box::new(GeluOp));
+        self.register(Box::new(LeakyReluOp));
+        self.register(Box::new(EluOp));
+        self.register(Box::new(SwishOp));
     }
 
     fn register_math(&mut self) {
@@ -101,6 +104,13 @@ impl OperatorRegistry {
         self.register(Box::new(MulOp));
         self.register(Box::new(DivOp));
         self.register(Box::new(MatMulOp));
+        self.register(Box::new(SqrtOp));
+        self.register(Box::new(PowOp));
+        self.register(Box::new(ExpOp));
+        self.register(Box::new(LogOp));
+        self.register(Box::new(NegOp));
+        self.register(Box::new(AbsOp));
+        self.register(Box::new(ClipOp));
     }
 
     fn register_neural_network(&mut self) {
@@ -120,6 +130,12 @@ impl OperatorRegistry {
         self.register(Box::new(SplitOp));
         self.register(Box::new(GatherOp));
         self.register(Box::new(SliceOp));
+        self.register(Box::new(SqueezeOp));
+        self.register(Box::new(UnsqueezeOp));
+        self.register(Box::new(ReduceMeanOp));
+        self.register(Box::new(ReduceSumOp));
+        self.register(Box::new(CastOp));
+        self.register(Box::new(EmbeddingOp));
     }
 }
 
