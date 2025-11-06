@@ -1,0 +1,46 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ronn"
+version = "0.1.0"
+description = "High-performance ONNX inference runtime with brain-inspired computing"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+keywords = ["ml", "inference", "onnx", "deep-learning", "neural-network"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-benchmark>=4.0",
+    "onnx>=1.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/ronn"
+Documentation = "https://docs.rs/ronn"
+Repository = "https://github.com/your-org/ronn"
+
+[tool.maturin]
+python-source = "python"
+module-name = "ronn._ronn"
+features = ["pyo3/extension-module"]

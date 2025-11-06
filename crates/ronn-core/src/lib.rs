@@ -35,6 +35,7 @@ pub mod graph;
 pub mod logging;
 pub mod memory_pool;
 pub mod ops;
+pub mod profiling;
 pub mod session;
 pub mod simd;
 pub mod tensor;
@@ -45,6 +46,10 @@ pub use error::{CoreError, Result};
 pub use graph::{GraphBuilder, GraphStatistics};
 pub use memory_pool::{global_pool, MemoryPool, PoolConfig, PoolStats, PooledBuffer};
 pub use ops::{ArithmeticOps, MatrixOps, ReductionOps, ShapeOps};
+pub use profiling::{
+    global_profiler, init_profiler, CategoryStats, OperationStats, ProfileConfig, ProfileEvent,
+    ProfileReport, Profiler,
+};
 pub use session::{
     GlobalStatistics, InferenceSession, SessionConfig, SessionManager, SessionStatistics,
 };

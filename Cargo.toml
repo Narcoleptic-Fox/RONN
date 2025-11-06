@@ -8,6 +8,7 @@ members = [
     "crates/ronn-learning",
     "crates/ronn-onnx",
     "crates/ronn-api",
+    "crates/ronn-python",
     "examples/*",
     "tests/integration"
 ]
@@ -86,6 +87,10 @@ getrandom = { version = "0.2", features = ["js"] }
 # Custom hardware provider support
 dlopen2 = "0.7"
 libloading = "0.8"
+
+# Python bindings
+pyo3 = "0.20"
+numpy = "0.20"
 
 [workspace.lints.rust]
 missing_docs = "warn"
