@@ -33,18 +33,22 @@
 pub mod error;
 pub mod graph;
 pub mod logging;
+pub mod memory_pool;
 pub mod ops;
 pub mod session;
+pub mod simd;
 pub mod tensor;
 pub mod types;
 
 // Re-export commonly used types
 pub use error::{CoreError, Result};
 pub use graph::{GraphBuilder, GraphStatistics};
+pub use memory_pool::{global_pool, MemoryPool, PoolConfig, PoolStats, PooledBuffer};
 pub use ops::{ArithmeticOps, MatrixOps, ReductionOps, ShapeOps};
 pub use session::{
     GlobalStatistics, InferenceSession, SessionConfig, SessionManager, SessionStatistics,
 };
+pub use simd::{simd_features, SimdFeatures, SimdLevel};
 pub use tensor::Tensor;
 pub use types::{
     AttributeValue, CompiledKernel, DataType, ExecutionProvider, GraphEdge, GraphNode, KernelStats,

@@ -213,3 +213,146 @@ impl OnnxOperator for BatchNormOp {
         Ok(vec![result])
     }
 }
+
+// LayerNormalization: layer normalization (critical for transformers)
+pub struct LayerNormOp;
+
+impl OnnxOperator for LayerNormOp {
+    fn op_type(&self) -> &str {
+        "LayerNormalization"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.is_empty() {
+            return Err(OnnxError::InvalidGraph(
+                "LayerNormalization expects at least 1 input".to_string(),
+            ));
+        }
+
+        let input = inputs[0];
+
+        // Optional scale (gamma) and bias (beta)
+        let scale = if inputs.len() > 1 {
+            Some(inputs[1])
+        } else {
+            None
+        };
+
+        let bias = if inputs.len() > 2 {
+            Some(inputs[2])
+        } else {
+            None
+        };
+
+        // Extract epsilon attribute
+        let epsilon = if let Some(NodeAttribute::Float(e)) = attributes.get("epsilon") {
+            *e as f32
+        } else {
+            1e-5_f32
+        };
+
+        // Extract axis attribute (default: -1, which means last dimension)
+        let axis = if let Some(NodeAttribute::Int(a)) = attributes.get("axis") {
+            *a as i32
+        } else {
+            -1
+        };
+
+        let result = input.layer_norm(scale, bias, epsilon, axis)?;
+        Ok(vec![result])
+    }
+}
+
+// Attention: multi-head attention mechanism (critical for transformers)
+pub struct AttentionOp;
+
+impl OnnxOperator for AttentionOp {
+    fn op_type(&self) -> &str {
+        "Attention"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() < 3 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "Attention expects at least 3 inputs (Q, K, V), got {}",
+                inputs.len()
+            )));
+        }
+
+        let query = inputs[0];
+        let key = inputs[1];
+        let value = inputs[2];
+
+        // Optional mask and bias
+        let mask = if inputs.len() > 3 {
+            Some(inputs[3])
+        } else {
+            None
+        };
+
+        // Extract num_heads attribute
+        let num_heads = if let Some(NodeAttribute::Int(n)) = attributes.get("num_heads") {
+            *n as usize
+        } else {
+            return Err(OnnxError::InvalidGraph(
+                "Attention requires 'num_heads' attribute".to_string(),
+            ));
+        };
+
+        let result = query.attention(key, value, num_heads, mask)?;
+        Ok(vec![result])
+    }
+}
+
+// MultiHeadAttention: optimized multi-head attention
+pub struct MultiHeadAttentionOp;
+
+impl OnnxOperator for MultiHeadAttentionOp {
+    fn op_type(&self) -> &str {
+        "MultiHeadAttention"
+    }
+
+    fn execute(
+        &self,
+        inputs: &[&Tensor],
+        attributes: &HashMap<String, NodeAttribute>,
+    ) -> Result<Vec<Tensor>> {
+        if inputs.len() < 3 {
+            return Err(OnnxError::InvalidGraph(format!(
+                "MultiHeadAttention expects at least 3 inputs, got {}",
+                inputs.len()
+            )));
+        }
+
+        let query = inputs[0];
+        let key = inputs[1];
+        let value = inputs[2];
+
+        // Extract num_heads attribute
+        let num_heads = if let Some(NodeAttribute::Int(n)) = attributes.get("num_heads") {
+            *n as usize
+        } else {
+            return Err(OnnxError::InvalidGraph(
+                "MultiHeadAttention requires 'num_heads' attribute".to_string(),
+            ));
+        };
+
+        // Optional mask
+        let mask = if inputs.len() > 3 {
+            Some(inputs[3])
+        } else {
+            None
+        };
+
+        let result = query.attention(key, value, num_heads, mask)?;
+        Ok(vec![result])
+    }
+}

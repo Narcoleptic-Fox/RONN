@@ -350,10 +350,93 @@ impl Tensor {
         Ok(flattened.to_vec1()?)
     }
 
-    /// Split tensor along an axis.
-    pub fn split(&self, split_size: usize, dim: usize) -> Result<Vec<Tensor>> {
-        let _ = (split_size, dim);
-        Err(anyhow!("split not yet fully implemented"))
+    /// Stack tensors along a new dimension.
+    ///
+    /// # Arguments
+    /// * `tensors` - Slice of tensors to stack
+    /// * `dim` - Dimension along which to stack
+    ///
+    /// # Example
+    /// ```rust
+    /// use ronn_core::tensor::Tensor;
+    /// use ronn_core::types::{DataType, TensorLayout};
+    ///
+    /// let t1 = Tensor::from_data(vec![1.0, 2.0], vec![2], DataType::F32, TensorLayout::RowMajor)?;
+    /// let t2 = Tensor::from_data(vec![3.0, 4.0], vec![2], DataType::F32, TensorLayout::RowMajor)?;
+    /// let stacked = Tensor::stack(&[&t1, &t2], 0)?;
+    /// assert_eq!(stacked.shape(), vec![2, 2]);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn stack(tensors: &[&Tensor], dim: usize) -> Result<Self> {
+        if tensors.is_empty() {
+            return Err(anyhow!("Cannot stack empty tensor list"));
+        }
+
+        let candle_tensors: Vec<_> = tensors.iter().map(|t| &t.candle_tensor).collect();
+        let stacked = CandleTensor::stack(&candle_tensors, dim)?;
+
+        Ok(Self {
+            candle_tensor: stacked,
+            dtype: tensors[0].dtype,
+            layout: tensors[0].layout,
+        })
+    }
+
+    /// Split tensor into chunks along an axis.
+    ///
+    /// # Arguments
+    /// * `num_chunks` - Number of chunks to split into
+    /// * `dim` - Dimension along which to split
+    ///
+    /// # Example
+    /// ```rust
+    /// use ronn_core::tensor::Tensor;
+    /// use ronn_core::types::{DataType, TensorLayout};
+    ///
+    /// let t = Tensor::from_data(
+    ///     vec![1.0, 2.0, 3.0, 4.0],
+    ///     vec![2, 2],
+    ///     DataType::F32,
+    ///     TensorLayout::RowMajor
+    /// )?;
+    /// let chunks = t.split(2, 0)?;
+    /// assert_eq!(chunks.len(), 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn split(&self, num_chunks: usize, dim: usize) -> Result<Vec<Tensor>> {
+        if num_chunks == 0 {
+            return Err(anyhow!("Cannot split into 0 chunks"));
+        }
+
+        let shape = self.shape();
+        if dim >= shape.len() {
+            return Err(anyhow!("Dimension {} out of bounds for shape {:?}", dim, shape));
+        }
+
+        let dim_size = shape[dim];
+        if dim_size % num_chunks != 0 {
+            return Err(anyhow!(
+                "Dimension size {} not evenly divisible by {} chunks",
+                dim_size,
+                num_chunks
+            ));
+        }
+
+        let chunk_size = dim_size / num_chunks;
+        let mut chunks = Vec::with_capacity(num_chunks);
+
+        for i in 0..num_chunks {
+            let start = i * chunk_size;
+            let end = start + chunk_size;
+            let chunk = self.candle_tensor.narrow(dim, start, chunk_size)?;
+            chunks.push(Self {
+                candle_tensor: chunk,
+                dtype: self.dtype,
+                layout: self.layout,
+            });
+        }
+
+        Ok(chunks)
     }
 
     /// Gather elements along an axis.
@@ -366,6 +449,172 @@ impl Tensor {
     pub fn transpose(&self, perm: &[usize]) -> Result<Tensor> {
         let result = self.candle_tensor.permute(perm)?;
         Ok(Tensor::from_candle(result, self.dtype, self.layout))
+    }
+
+    /// Layer normalization (critical for transformers).
+    ///
+    /// Normalizes the input across the specified axis.
+    ///
+    /// # Arguments
+    /// * `scale` - Optional scale parameter (gamma)
+    /// * `bias` - Optional bias parameter (beta)
+    /// * `epsilon` - Small constant for numerical stability
+    /// * `axis` - Axis to normalize over (default: -1 for last dimension)
+    ///
+    /// # Example
+    /// ```rust
+    /// use ronn_core::tensor::Tensor;
+    /// use ronn_core::types::{DataType, TensorLayout};
+    ///
+    /// let input = Tensor::from_data(
+    ///     vec![1.0, 2.0, 3.0, 4.0],
+    ///     vec![2, 2],
+    ///     DataType::F32,
+    ///     TensorLayout::RowMajor
+    /// )?;
+    /// let normalized = input.layer_norm(None, None, 1e-5, -1)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn layer_norm(
+        &self,
+        scale: Option<&Tensor>,
+        bias: Option<&Tensor>,
+        epsilon: f32,
+        axis: i32,
+    ) -> Result<Self> {
+        use candle_nn::LayerNorm;
+
+        let shape = self.shape();
+        let normalized_shape = if axis == -1 {
+            vec![shape[shape.len() - 1]]
+        } else {
+            let axis_usize = if axis < 0 {
+                (shape.len() as i32 + axis) as usize
+            } else {
+                axis as usize
+            };
+            vec![shape[axis_usize]]
+        };
+
+        // Create layer norm config
+        let config = candle_nn::LayerNormConfig {
+            eps: epsilon as f64,
+            ..Default::default()
+        };
+
+        // If scale and bias provided, use them
+        let normalized = if let (Some(s), Some(b)) = (scale, bias) {
+            let ln = LayerNorm::new(s.candle_tensor.clone(), b.candle_tensor.clone(), config);
+            ln.forward(&self.candle_tensor)?
+        } else {
+            // Simple normalization without learnable parameters
+            let mean = self.candle_tensor.mean_keepdim(axis as usize)?;
+            let variance = self
+                .candle_tensor
+                .broadcast_sub(&mean)?
+                .sqr()?
+                .mean_keepdim(axis as usize)?;
+            let std = (variance + epsilon as f64)?.sqrt()?;
+            self.candle_tensor.broadcast_sub(&mean)?.broadcast_div(&std)?
+        };
+
+        Ok(Self::from_candle(normalized, self.dtype, self.layout))
+    }
+
+    /// Multi-head attention mechanism (critical for transformers).
+    ///
+    /// Computes scaled dot-product attention: softmax(Q·K^T / sqrt(d_k))·V
+    ///
+    /// # Arguments
+    /// * `key` - Key tensor
+    /// * `value` - Value tensor
+    /// * `num_heads` - Number of attention heads
+    /// * `mask` - Optional attention mask
+    ///
+    /// # Example
+    /// ```rust
+    /// use ronn_core::tensor::Tensor;
+    /// use ronn_core::types::{DataType, TensorLayout};
+    ///
+    /// let query = Tensor::from_data(
+    ///     vec![1.0; 64],
+    ///     vec![1, 8, 8],  // (batch, seq_len, d_model)
+    ///     DataType::F32,
+    ///     TensorLayout::RowMajor
+    /// )?;
+    /// let key = query.clone();
+    /// let value = query.clone();
+    ///
+    /// let output = query.attention(&key, &value, 2, None)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn attention(
+        &self,
+        key: &Tensor,
+        value: &Tensor,
+        num_heads: usize,
+        mask: Option<&Tensor>,
+    ) -> Result<Self> {
+        let query = &self.candle_tensor;
+        let key = &key.candle_tensor;
+        let value = &value.candle_tensor;
+
+        // Get dimensions
+        let query_shape = query.dims();
+        if query_shape.len() != 3 {
+            return Err(anyhow!(
+                "Query must be 3D (batch, seq_len, d_model), got {:?}",
+                query_shape
+            ));
+        }
+
+        let batch_size = query_shape[0];
+        let seq_len = query_shape[1];
+        let d_model = query_shape[2];
+
+        if d_model % num_heads != 0 {
+            return Err(anyhow!(
+                "d_model ({}) must be divisible by num_heads ({})",
+                d_model,
+                num_heads
+            ));
+        }
+
+        let d_k = d_model / num_heads;
+
+        // Reshape Q, K, V for multi-head attention
+        // (batch, seq_len, d_model) -> (batch, num_heads, seq_len, d_k)
+        let q = query
+            .reshape(&[batch_size, seq_len, num_heads, d_k])?
+            .transpose(1, 2)?;
+        let k = key
+            .reshape(&[batch_size, seq_len, num_heads, d_k])?
+            .transpose(1, 2)?;
+        let v = value
+            .reshape(&[batch_size, seq_len, num_heads, d_k])?
+            .transpose(1, 2)?;
+
+        // Compute attention scores: Q·K^T / sqrt(d_k)
+        let k_t = k.transpose(2, 3)?;
+        let scores = q.matmul(&k_t)? / (d_k as f64).sqrt();
+
+        // Apply mask if provided
+        let scores = if let Some(m) = mask {
+            scores.broadcast_add(&m.candle_tensor)?
+        } else {
+            scores
+        };
+
+        // Apply softmax
+        let attention_weights = candle_nn::ops::softmax_last_dim(&scores)?;
+
+        // Apply attention to values: attention_weights·V
+        let output = attention_weights.matmul(&v)?;
+
+        // Reshape back: (batch, num_heads, seq_len, d_k) -> (batch, seq_len, d_model)
+        let output = output.transpose(1, 2)?.reshape(&[batch_size, seq_len, d_model])?;
+
+        Ok(Self::from_candle(output, self.dtype, self.layout))
     }
 }
 

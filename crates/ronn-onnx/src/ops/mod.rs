@@ -108,6 +108,9 @@ impl OperatorRegistry {
         self.register(Box::new(MaxPoolOp));
         self.register(Box::new(AvgPoolOp));
         self.register(Box::new(BatchNormOp));
+        self.register(Box::new(LayerNormOp));
+        self.register(Box::new(AttentionOp));
+        self.register(Box::new(MultiHeadAttentionOp));
     }
 
     fn register_tensor_ops(&mut self) {

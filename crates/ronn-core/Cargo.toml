@@ -35,6 +35,9 @@ tracing.workspace = true
 dashmap.workspace = true
 tokio.workspace = true
 
+# Memory management
+once_cell.workspace = true
+
 [dev-dependencies]
 criterion.workspace = true
 proptest.workspace = true
