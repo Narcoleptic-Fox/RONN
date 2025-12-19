@@ -25,6 +25,18 @@ impl From<anyhow::Error> for RonnError {
     }
 }
 
+impl From<pyo3::PyErr> for RonnError {
+    fn from(err: pyo3::PyErr) -> Self {
+        RonnError(err.to_string())
+    }
+}
+
+impl From<numpy::NotContiguousError> for RonnError {
+    fn from(err: numpy::NotContiguousError) -> Self {
+        RonnError(err.to_string())
+    }
+}
+
 impl From<RonnError> for PyErr {
     fn from(err: RonnError) -> PyErr {
         PyException::new_err(err.0)

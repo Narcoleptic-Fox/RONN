@@ -881,7 +881,7 @@ impl GpuExecutionProvider {
             .position(|&id| id == device_id)
             .ok_or_else(|| anyhow!("Device {} not found", device_id))?;
 
-        if let Some(Some(ref kernel_manager)) = self.cuda_kernel_managers.get(device_index) {
+        if let Some(Some(kernel_manager)) = self.cuda_kernel_managers.get(device_index) {
             // Check if we have a custom kernel for this operation
             let tensor_shape = inputs
                 .first()
@@ -916,7 +916,7 @@ impl GpuExecutionProvider {
     /// Clear all custom kernel caches to free memory.
     pub fn clear_kernel_caches(&self) {
         for manager in &self.cuda_kernel_managers {
-            if let Some(ref kernel_manager) = manager {
+            if let Some(kernel_manager) = manager {
                 kernel_manager.clear_cache();
             }
         }

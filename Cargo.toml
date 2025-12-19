@@ -10,20 +10,18 @@ members = [
     "crates/ronn-api",
     "crates/ronn-python",
     "examples/*",
-    "tests/integration"
+    "tests/integration",
 ]
-exclude = [
-    "examples/models"
-]
+exclude = ["examples/models"]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-authors = ["RONN Contributors"]
+edition = "2024"
+authors = ["Brock Claussen"]
 license = "MIT"
-repository = "https://github.com/your-org/ronn"
-homepage = "https://github.com/your-org/ronn"
+repository = "https://github.com/Narcoleptic-Fox/RONN"
+homepage = "https://github.com/Narcoleptic-Fox/RONN"
 documentation = "https://docs.rs/ronn"
 keywords = ["ml", "inference", "onnx", "brain-inspired", "runtime"]
 categories = ["science", "algorithms", "wasm"]

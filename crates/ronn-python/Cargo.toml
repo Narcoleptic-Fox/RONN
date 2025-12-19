@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 [dependencies]
 ronn-api = { path = "../ronn-api" }
 ronn-core = { path = "../ronn-core" }
+ronn-graph = { path = "../ronn-graph" }
 ronn-providers = { path = "../ronn-providers" }
 
 # PyO3 for Python bindings

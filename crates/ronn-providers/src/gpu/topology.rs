@@ -1076,7 +1076,7 @@ impl PlacementStrategy for BandwidthOptimizedPlacement {
         let selected_devices: Vec<usize> = sorted_devices
             .iter()
             .take(device_count)
-            .map(|(&id, _)| id)
+            .map(|(id, _)| **id)
             .collect();
 
         let mut device_assignments = HashMap::new();
@@ -1163,7 +1163,7 @@ impl PlacementStrategy for PowerEfficientPlacement {
         let selected_devices: Vec<usize> = sorted_devices
             .iter()
             .take(device_count)
-            .map(|(&id, _)| id)
+            .map(|(id, _)| **id)
             .collect();
 
         let mut device_assignments = HashMap::new();

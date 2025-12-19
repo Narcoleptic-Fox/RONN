@@ -30,8 +30,6 @@
 //! ```
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
-use std::collections::HashMap;
 
 mod error;
 mod model;
@@ -68,35 +66,35 @@ pub struct PyOptimizationLevel {
 
 #[pymethods]
 impl PyOptimizationLevel {
-    /// No optimizations
+    /// No optimizations (O0)
     #[staticmethod]
     fn none() -> Self {
         Self {
-            inner: ronn_core::OptimizationLevel::O0,
+            inner: ronn_core::OptimizationLevel::None,
         }
     }
 
-    /// Basic optimizations
+    /// Basic optimizations (O1)
     #[staticmethod]
     fn basic() -> Self {
         Self {
-            inner: ronn_core::OptimizationLevel::O1,
+            inner: ronn_core::OptimizationLevel::Basic,
         }
     }
 
-    /// Default optimizations (recommended)
+    /// Default optimizations (O2, recommended)
     #[staticmethod]
     fn default() -> Self {
         Self {
-            inner: ronn_core::OptimizationLevel::O2,
+            inner: ronn_core::OptimizationLevel::Basic,
         }
     }
 
-    /// Aggressive optimizations
+    /// Aggressive optimizations (O3)
     #[staticmethod]
     fn aggressive() -> Self {
         Self {
-            inner: ronn_core::OptimizationLevel::O3,
+            inner: ronn_core::OptimizationLevel::Aggressive,
         }
     }
 }
@@ -111,7 +109,7 @@ impl Default for PyOptimizationLevel {
 #[pyclass(name = "ProviderType")]
 #[derive(Clone)]
 pub struct PyProviderType {
-    inner: ronn_providers::ProviderType,
+    inner: ronn_core::ProviderId,
 }
 
 #[pymethods]
@@ -120,7 +118,7 @@ impl PyProviderType {
     #[staticmethod]
     fn cpu() -> Self {
         Self {
-            inner: ronn_providers::ProviderType::Cpu,
+            inner: ronn_core::ProviderId::CPU,
         }
     }
 
@@ -128,7 +126,7 @@ impl PyProviderType {
     #[staticmethod]
     fn gpu() -> Self {
         Self {
-            inner: ronn_providers::ProviderType::Gpu,
+            inner: ronn_core::ProviderId::GPU,
         }
     }
 
@@ -136,7 +134,7 @@ impl PyProviderType {
     #[staticmethod]
     fn bitnet() -> Self {
         Self {
-            inner: ronn_providers::ProviderType::BitNet,
+            inner: ronn_core::ProviderId::BitNet,
         }
     }
 
@@ -144,7 +142,7 @@ impl PyProviderType {
     #[staticmethod]
     fn wasm() -> Self {
         Self {
-            inner: ronn_providers::ProviderType::Wasm,
+            inner: ronn_core::ProviderId::WebAssembly,
         }
     }
 }

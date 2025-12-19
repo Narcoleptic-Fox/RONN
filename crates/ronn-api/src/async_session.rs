@@ -3,11 +3,12 @@
 //! This module provides async/await support for RONN inference sessions,
 //! enabling efficient concurrent request handling for production workloads.
 
-use crate::{Session, SessionOptions};
-use ronn_core::{Result, Tensor};
+use crate::error::{Error, Result};
+use crate::{InferenceSession, Model, SessionOptions};
+use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::RwLock;
 
 /// Async wrapper for inference sessions.
 ///
@@ -31,7 +32,7 @@ use tokio::sync::RwLock;
 /// }
 /// ```
 pub struct AsyncSession {
-    inner: Arc<RwLock<Session>>,
+    inner: Arc<RwLock<InferenceSession>>,
 }
 
 impl AsyncSession {
@@ -50,12 +51,13 @@ impl AsyncSession {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self> {
+    pub async fn from_file(path: impl AsRef<std::path::Path> + Send + 'static) -> Result<Self> {
         let session = tokio::task::spawn_blocking(move || {
-            Session::from_file(path)
+            let model = Model::load(path)?;
+            model.create_session_default()
         })
         .await
-        .map_err(|e| ronn_core::CoreError::from(e.to_string()))??;
+        .map_err(|e| Error::InferenceError(format!("Task join error: {}", e)))??;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(session)),
@@ -82,14 +84,15 @@ impl AsyncSession {
     /// # }
     /// ```
     pub async fn with_options(
-        path: impl AsRef<std::path::Path>,
+        path: impl AsRef<std::path::Path> + Send + 'static,
         options: SessionOptions,
     ) -> Result<Self> {
         let session = tokio::task::spawn_blocking(move || {
-            Session::with_options(path, options)
+            let model = Model::load(path)?;
+            model.create_session(options)
         })
         .await
-        .map_err(|e| ronn_core::CoreError::from(e.to_string()))??;
+        .map_err(|e| Error::InferenceError(format!("Task join error: {}", e)))??;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(session)),
@@ -113,7 +116,7 @@ impl AsyncSession {
     /// ```no_run
     /// # use ronn_api::AsyncSession;
     /// # use std::collections::HashMap;
-    /// # async fn example(session: AsyncSession, inputs: HashMap<String, ronn_core::Tensor>) -> Result<(), Box<dyn std::error::Error>> {
+    /// # async fn example(session: AsyncSession, inputs: HashMap<String, ronn_core::tensor::Tensor>) -> Result<(), Box<dyn std::error::Error>> {
     /// let outputs = session.run(inputs).await?;
     /// # Ok(())
     /// # }
@@ -122,14 +125,23 @@ impl AsyncSession {
         &self,
         inputs: HashMap<String, Tensor>,
     ) -> Result<HashMap<String, Tensor>> {
-        let session = self.inner.read().await;
+        // Clone the inner Arc so we can move it into the blocking task
+        let session_arc = Arc::clone(&self.inner);
 
         // Run inference in blocking thread pool to avoid blocking tokio runtime
         tokio::task::spawn_blocking(move || {
-            session.run(inputs)
+            let session = session_arc
+                .read()
+                .map_err(|e| Error::InferenceError(format!("Lock poisoned: {}", e)))?;
+            // Convert HashMap<String, Tensor> to HashMap<&str, Tensor>
+            let inputs_ref: HashMap<&str, Tensor> = inputs
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.clone()))
+                .collect();
+            session.run(inputs_ref)
         })
         .await
-        .map_err(|e| ronn_core::CoreError::from(e.to_string()))?
+        .map_err(|e| Error::InferenceError(format!("Task join error: {}", e)))?
     }
 
     /// Run inference with read lock (allows concurrent reads if session supports it).

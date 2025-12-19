@@ -2,7 +2,6 @@
 
 use crate::error::{PyResult, RonnError};
 use crate::session::PySession;
-use crate::{PyOptimizationLevel, PyProviderType};
 use pyo3::prelude::*;
 use ronn_api::Model;
 
@@ -12,8 +11,8 @@ use ronn_api::Model;
 ///
 /// ```python
 /// model = ronn.Model.load("model.onnx")
-/// print(f"Inputs: {model.inputs()}")
-/// print(f"Outputs: {model.outputs()}")
+/// print(f"Inputs: {model.input_names()}")
+/// print(f"Outputs: {model.output_names()}")
 /// ```
 #[pyclass(name = "Model")]
 pub struct PyModel {
@@ -44,8 +43,8 @@ impl PyModel {
     /// # Returns
     ///
     /// List of input tensor names
-    fn inputs(&self) -> Vec<String> {
-        self.inner.inputs()
+    fn input_names(&self) -> Vec<String> {
+        self.inner.input_names().iter().map(|s| s.to_string()).collect()
     }
 
     /// Get model output names
@@ -53,15 +52,15 @@ impl PyModel {
     /// # Returns
     ///
     /// List of output tensor names
-    fn outputs(&self) -> Vec<String> {
-        self.inner.outputs()
+    fn output_names(&self) -> Vec<String> {
+        self.inner.output_names().iter().map(|s| s.to_string()).collect()
     }
 
     /// Create an inference session
     ///
     /// # Arguments
     ///
-    /// * `optimization_level` - Graph optimization level ("O0", "O1", "O2", "O3")
+    /// * `optimization_level` - Graph optimization level ("none", "basic", "aggressive")
     /// * `provider` - Execution provider ("cpu", "gpu", "bitnet", "wasm")
     /// * `num_threads` - Number of threads for CPU execution
     ///
@@ -69,36 +68,36 @@ impl PyModel {
     ///
     /// ```python
     /// session = model.create_session(
-    ///     optimization_level="O3",
+    ///     optimization_level="aggressive",
     ///     provider="cpu",
     ///     num_threads=4
     /// )
     /// ```
-    #[pyo3(signature = (optimization_level="O2", provider="cpu", num_threads=None))]
+    #[pyo3(signature = (optimization_level="basic", provider="cpu", num_threads=None))]
     fn create_session(
         &self,
         optimization_level: &str,
         provider: &str,
         num_threads: Option<usize>,
     ) -> PyResult<PySession> {
-        use ronn_api::{SessionBuilder, SessionOptions};
+        use ronn_api::SessionOptions;
 
         // Parse optimization level
         let opt_level = match optimization_level {
-            "O0" | "none" => ronn_core::OptimizationLevel::O0,
-            "O1" | "basic" => ronn_core::OptimizationLevel::O1,
-            "O2" | "default" => ronn_core::OptimizationLevel::O2,
-            "O3" | "aggressive" => ronn_core::OptimizationLevel::O3,
-            _ => return Err(RonnError(format!("Invalid optimization level: {}", optimization_level))),
+            "O0" | "none" => ronn_graph::OptimizationLevel::O0,
+            "O1" | "basic" => ronn_graph::OptimizationLevel::O1,
+            "O2" | "default" => ronn_graph::OptimizationLevel::O2,
+            "O3" | "aggressive" => ronn_graph::OptimizationLevel::O3,
+            _ => return Err(RonnError(format!("Invalid optimization level: {}. Use 'none'/'O0', 'basic'/'O1', 'default'/'O2', or 'aggressive'/'O3'", optimization_level))),
         };
 
         // Parse provider
         let provider_type = match provider {
-            "cpu" => ronn_providers::ProviderType::Cpu,
-            "gpu" | "cuda" => ronn_providers::ProviderType::Gpu,
-            "bitnet" => ronn_providers::ProviderType::BitNet,
-            "wasm" => ronn_providers::ProviderType::Wasm,
-            _ => return Err(RonnError(format!("Invalid provider: {}", provider))),
+            "cpu" => ronn_core::ProviderId::CPU,
+            "gpu" | "cuda" => ronn_core::ProviderId::GPU,
+            "bitnet" => ronn_core::ProviderId::BitNet,
+            "wasm" => ronn_core::ProviderId::WebAssembly,
+            _ => return Err(RonnError(format!("Invalid provider: {}. Use 'cpu', 'gpu', 'bitnet', or 'wasm'", provider))),
         };
 
         // Build session options
@@ -121,20 +120,18 @@ impl PyModel {
     /// # Returns
     ///
     /// Dictionary with model information
-    fn metadata(&self) -> pyo3::types::PyDict {
-        Python::with_gil(|py| {
-            let dict = pyo3::types::PyDict::new(py);
-            dict.set_item("inputs", self.inputs()).unwrap();
-            dict.set_item("outputs", self.outputs()).unwrap();
-            dict
-        })
+    fn metadata(&self, py: Python) -> PyObject {
+        let dict = pyo3::types::PyDict::new(py);
+        dict.set_item("inputs", self.input_names()).unwrap();
+        dict.set_item("outputs", self.output_names()).unwrap();
+        dict.into()
     }
 
     fn __repr__(&self) -> String {
         format!(
             "Model(inputs={:?}, outputs={:?})",
-            self.inputs(),
-            self.outputs()
+            self.input_names(),
+            self.output_names()
         )
     }
 }

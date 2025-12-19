@@ -1,7 +1,6 @@
 //! Session class for Python bindings
 
 use crate::error::{PyResult, RonnError};
-use crate::tensor::PyTensor;
 use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -52,7 +51,7 @@ impl PySession {
     /// ```
     fn run(&self, py: Python, inputs: &PyDict) -> PyResult<PyObject> {
         // Convert Python dict to HashMap<String, Tensor>
-        let mut input_tensors = HashMap::new();
+        let mut input_tensors: HashMap<String, ronn_core::Tensor> = HashMap::new();
 
         for (key, value) in inputs.iter() {
             let name: String = key.extract()?;
@@ -78,14 +77,20 @@ impl PySession {
             input_tensors.insert(name, tensor);
         }
 
+        // Convert HashMap<String, Tensor> to HashMap<&str, Tensor>
+        let inputs_ref: HashMap<&str, ronn_core::Tensor> = input_tensors
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+
         // Run inference
-        let output_tensors = self.inner.run(input_tensors).map_err(RonnError::from)?;
+        let output_tensors = self.inner.run(inputs_ref).map_err(RonnError::from)?;
 
         // Convert back to Python dict
         let result = PyDict::new(py);
         for (name, tensor) in output_tensors {
             // Convert tensor to numpy array
-            let data = tensor.to_vec1_f32().map_err(RonnError::from)?;
+            let data: Vec<f32> = tensor.to_vec().unwrap_or_else(|_| vec![]);
             let array = PyArray1::from_vec(py, data);
             result.set_item(name, array)?;
         }
@@ -93,33 +98,7 @@ impl PySession {
         Ok(result.into())
     }
 
-    /// Get input names
-    fn inputs(&self) -> Vec<String> {
-        self.inner.inputs()
-    }
-
-    /// Get output names
-    fn outputs(&self) -> Vec<String> {
-        self.inner.outputs()
-    }
-
-    /// Get session statistics
-    fn stats(&self) -> PyObject {
-        Python::with_gil(|py| {
-            let stats = self.inner.stats();
-            let dict = PyDict::new(py);
-            dict.set_item("total_runs", stats.total_runs).unwrap();
-            dict.set_item("total_time_ms", stats.total_time_ms).unwrap();
-            dict.set_item("avg_time_ms", stats.avg_time_ms).unwrap();
-            dict.into()
-        })
-    }
-
     fn __repr__(&self) -> String {
-        format!(
-            "Session(inputs={:?}, outputs={:?})",
-            self.inputs(),
-            self.outputs()
-        )
+        "Session(...)".to_string()
     }
 }

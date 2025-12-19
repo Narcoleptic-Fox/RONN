@@ -84,7 +84,7 @@ impl OperatorRegistry {
 
     /// Get list of all supported operators
     pub fn supported_operators(&self) -> Vec<String> {
-        self.operators.keys().cloned().collect()
+        self.operators.keys().cloned().collect::<Vec<String>>()
     }
 
     fn register_activations(&mut self) {

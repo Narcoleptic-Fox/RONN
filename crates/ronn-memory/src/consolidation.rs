@@ -2,7 +2,7 @@
 
 use crate::episodic::{Episode, EpisodicMemory};
 use crate::semantic::Concept;
-use crate::{MemoryId, Result};
+use crate::Result;
 use std::collections::HashSet;
 
 /// Configuration for sleep consolidation

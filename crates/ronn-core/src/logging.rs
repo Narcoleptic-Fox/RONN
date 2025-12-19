@@ -3,12 +3,12 @@
 //! This module provides centralized logging setup using the `tracing` crate
 //! for structured, contextual logging throughout the RONN runtime.
 
-use tracing::{Level, Metadata};
+use tracing::Level;
 use tracing_subscriber::{
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    EnvFilter, Layer,
+    EnvFilter,
 };
 
 /// Logging configuration for RONN runtime.

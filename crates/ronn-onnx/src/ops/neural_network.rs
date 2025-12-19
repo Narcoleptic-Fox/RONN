@@ -39,9 +39,9 @@ impl OnnxOperator for Conv2dOp {
         let group = Self::get_int_attr(attributes, "group", 1);
 
         // Convert to usize
-        let strides_usize: Vec<usize> = strides.iter().map(|&x| x as usize).collect();
-        let pads_usize: Vec<usize> = pads.iter().map(|&x| x as usize).collect();
-        let dilations_usize: Vec<usize> = dilations.iter().map(|&x| x as usize).collect();
+        let strides_usize: Vec<usize> = strides.iter().map(|&x| x as usize).collect::<Vec<usize>>();
+        let pads_usize: Vec<usize> = pads.iter().map(|&x| x as usize).collect::<Vec<usize>>();
+        let dilations_usize: Vec<usize> = dilations.iter().map(|&x| x as usize).collect::<Vec<usize>>();
 
         // Perform convolution
         let result = input.conv2d(
@@ -104,9 +104,9 @@ impl OnnxOperator for MaxPoolOp {
         let pads = Self::get_ints_attr(attributes, "pads", vec![0, 0, 0, 0]);
 
         // Convert to usize
-        let kernel_shape_usize: Vec<usize> = kernel_shape.iter().map(|&x| x as usize).collect();
-        let strides_usize: Vec<usize> = strides.iter().map(|&x| x as usize).collect();
-        let pads_usize: Vec<usize> = pads.iter().map(|&x| x as usize).collect();
+        let kernel_shape_usize: Vec<usize> = kernel_shape.iter().map(|&x| x as usize).collect::<Vec<usize>>();
+        let strides_usize: Vec<usize> = strides.iter().map(|&x| x as usize).collect::<Vec<usize>>();
+        let pads_usize: Vec<usize> = pads.iter().map(|&x| x as usize).collect::<Vec<usize>>();
 
         let result = inputs[0].max_pool2d(&kernel_shape_usize, &strides_usize, &pads_usize)?;
         Ok(vec![result])
@@ -153,9 +153,9 @@ impl OnnxOperator for AvgPoolOp {
         let pads = Self::get_ints_attr(attributes, "pads", vec![0, 0, 0, 0]);
 
         // Convert to usize
-        let kernel_shape_usize: Vec<usize> = kernel_shape.iter().map(|&x| x as usize).collect();
-        let strides_usize: Vec<usize> = strides.iter().map(|&x| x as usize).collect();
-        let pads_usize: Vec<usize> = pads.iter().map(|&x| x as usize).collect();
+        let kernel_shape_usize: Vec<usize> = kernel_shape.iter().map(|&x| x as usize).collect::<Vec<usize>>();
+        let strides_usize: Vec<usize> = strides.iter().map(|&x| x as usize).collect::<Vec<usize>>();
+        let pads_usize: Vec<usize> = pads.iter().map(|&x| x as usize).collect::<Vec<usize>>();
 
         let result = inputs[0].avg_pool2d(&kernel_shape_usize, &strides_usize, &pads_usize)?;
         Ok(vec![result])

@@ -175,7 +175,7 @@ impl OnnxOperator for PowOp {
             )));
         }
 
-        let result = inputs[0].pow(inputs[1])?;
+        let result = inputs[0].pow_tensor(inputs[1])?;
         Ok(vec![result])
     }
 }

@@ -3,9 +3,10 @@
 //! This module provides the core Tensor type for RONN with seamless integration
 //! to the Candle tensor library for high-performance operations and GPU acceleration.
 
+use crate::ops::shape::ShapeOps;
 use crate::types::{DataType, Tensor as RonnTensor, TensorLayout};
 use anyhow::{anyhow, Result};
-use candle_core::{DType, Device, Shape, Tensor as CandleTensor};
+use candle_core::{DType, Device, Module, Shape, Tensor as CandleTensor};
 
 /// Enhanced Tensor implementation with Candle backend.
 #[derive(Debug, Clone)]
@@ -497,14 +498,9 @@ impl Tensor {
         };
 
         // Create layer norm config
-        let config = candle_nn::LayerNormConfig {
-            eps: epsilon as f64,
-            ..Default::default()
-        };
-
         // If scale and bias provided, use them
         let normalized = if let (Some(s), Some(b)) = (scale, bias) {
-            let ln = LayerNorm::new(s.candle_tensor.clone(), b.candle_tensor.clone(), config);
+            let ln = LayerNorm::new(s.candle_tensor.clone(), b.candle_tensor.clone(), epsilon as f64);
             ln.forward(&self.candle_tensor)?
         } else {
             // Simple normalization without learnable parameters
@@ -596,7 +592,7 @@ impl Tensor {
 
         // Compute attention scores: Q·K^T / sqrt(d_k)
         let k_t = k.transpose(2, 3)?;
-        let scores = q.matmul(&k_t)? / (d_k as f64).sqrt();
+        let scores = (q.matmul(&k_t)? / (d_k as f64).sqrt())?;
 
         // Apply mask if provided
         let scores = if let Some(m) = mask {
@@ -623,8 +619,9 @@ impl Tensor {
         Ok(Self::from_candle(result, self.dtype, self.layout))
     }
 
-    /// Element-wise power operation
-    pub fn pow(&self, exponent: &Tensor) -> Result<Self> {
+    /// Element-wise power operation with tensor exponent.
+    /// For scalar exponents, use the `ArithmeticOps::pow` trait method instead.
+    pub fn pow_tensor(&self, exponent: &Tensor) -> Result<Self> {
         let result = self.candle_tensor.pow(&exponent.candle_tensor)?;
         Ok(Self::from_candle(result, self.dtype, self.layout))
     }
@@ -661,7 +658,7 @@ impl Tensor {
 
     /// LeakyReLU activation: max(alpha * x, x)
     pub fn leaky_relu(&self, alpha: f32) -> Result<Self> {
-        let scaled = (&self.candle_tensor * alpha)?;
+        let scaled = self.candle_tensor.affine(alpha as f64, 0.0)?;
         let result = self.candle_tensor.maximum(&scaled)?;
         Ok(Self::from_candle(result, self.dtype, self.layout))
     }
@@ -673,8 +670,8 @@ impl Tensor {
         let mask = self.candle_tensor.gt(&zero)?;
 
         let positive_part = &self.candle_tensor;
-        let exp_part = (self.candle_tensor.exp()? - 1.0)?;
-        let negative_part = (exp_part * alpha)?;
+        let exp_part = self.candle_tensor.exp()?.affine(1.0, -1.0)?;
+        let negative_part = exp_part.affine(alpha as f64, 0.0)?;
 
         let result = mask.where_cond(positive_part, &negative_part)?;
         Ok(Self::from_candle(result, self.dtype, self.layout))
@@ -695,12 +692,12 @@ impl Tensor {
             shape
                 .iter()
                 .enumerate()
-                .filter(|(i, &dim)| !axes.contains(i) || dim != 1)
-                .map(|(_, &dim)| dim)
+                .filter(|(i, dim)| !axes.contains(i) || **dim != 1)
+                .map(|(_, dim)| *dim)
                 .collect()
         } else {
             // Remove all dimensions of size 1
-            shape.iter().copied().filter(|&dim| dim != 1).collect()
+            shape.iter().copied().filter(|dim| *dim != 1).collect()
         };
 
         if new_shape.is_empty() {

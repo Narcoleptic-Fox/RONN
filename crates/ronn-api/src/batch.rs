@@ -3,14 +3,14 @@
 //! Provides static and dynamic batching to maximize GPU/CPU utilization
 //! and achieve 3-10x throughput improvements.
 
-use ronn_core::{Result, Tensor};
+use crate::error::{Error, Result};
+use crate::InferenceSession;
+use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tokio::time::timeout;
-
-use crate::{InferenceSession, SessionOptions};
 
 /// Batch processing strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,11 +166,11 @@ impl BatchProcessor {
         self.request_tx
             .send(request)
             .await
-            .map_err(|_| ronn_core::CoreError::from("Batch processor channel closed"))?;
+            .map_err(|_| Error::InferenceError("Batch processor channel closed".to_string()))?;
 
         response_rx
             .await
-            .map_err(|_| ronn_core::CoreError::from("Response channel closed"))?
+            .map_err(|_| Error::InferenceError("Response channel closed".to_string()))?
     }
 
     /// Main worker loop - collects requests and processes batches
@@ -268,21 +268,29 @@ impl BatchProcessor {
             Ok(inputs) => inputs,
             Err(e) => {
                 // Send error to all requests
+                let err_msg = format!("{}", e);
                 for request in batch {
-                    request.send_response(Err(e.clone()));
+                    request.send_response(Err(Error::InferenceError(err_msg.clone())));
                 }
                 return;
             }
         };
 
+        // Convert HashMap<String, Tensor> to HashMap<&str, Tensor>
+        let inputs_ref: HashMap<&str, Tensor> = combined_inputs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect();
+
         // Run inference on batched inputs
         let session = session.read().await;
-        let combined_outputs = match session.run(combined_inputs) {
+        let combined_outputs = match session.run(inputs_ref) {
             Ok(outputs) => outputs,
             Err(e) => {
                 // Send error to all requests
+                let err_msg = format!("{}", e);
                 for request in batch {
-                    request.send_response(Err(e.clone()));
+                    request.send_response(Err(Error::InferenceError(err_msg.clone())));
                 }
                 return;
             }
@@ -297,8 +305,9 @@ impl BatchProcessor {
             }
             Err(e) => {
                 // Send error to all requests
+                let err_msg = format!("{}", e);
                 for request in batch {
-                    request.send_response(Err(e.clone()));
+                    request.send_response(Err(Error::InferenceError(err_msg.clone())));
                 }
             }
         }
@@ -317,17 +326,19 @@ impl BatchProcessor {
 
         for name in input_names {
             // Collect all tensors for this input
-            let tensors: Vec<_> = batch
+            let tensors: std::result::Result<Vec<_>, Error> = batch
                 .iter()
                 .map(|req| {
                     req.inputs
                         .get(&name)
-                        .ok_or_else(|| ronn_core::CoreError::from("Missing input tensor"))
+                        .ok_or_else(|| Error::InvalidInput(format!("Missing input tensor: {}", name)))
                 })
-                .collect::<Result<Vec<_>>>()?;
+                .collect();
+            let tensors = tensors?;
 
             // Stack tensors along batch dimension (dim 0)
-            let batched = Tensor::stack(&tensors, 0)?;
+            let batched = Tensor::stack(&tensors, 0)
+                .map_err(|e| Error::InferenceError(format!("Failed to stack tensors: {}", e)))?;
             combined.insert(name, batched);
         }
 
@@ -343,7 +354,8 @@ impl BatchProcessor {
 
         for (name, batched_tensor) in combined {
             // Split along batch dimension (dim 0)
-            let individual_tensors = batched_tensor.split(batch_size, 0)?;
+            let individual_tensors = batched_tensor.split(batch_size, 0)
+                .map_err(|e| Error::InferenceError(format!("Failed to split tensors: {}", e)))?;
 
             for (i, tensor) in individual_tensors.into_iter().enumerate() {
                 results[i].insert(name.clone(), tensor);

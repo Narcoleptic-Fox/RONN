@@ -336,43 +336,6 @@ impl Tensor {
         ))
     }
 
-    /// Stack tensors along a new dimension.
-    pub fn stack(tensors: &[&Tensor], dim: usize) -> Result<Tensor> {
-        if tensors.is_empty() {
-            return Err(anyhow!("Cannot stack empty list of tensors"));
-        }
-
-        let first_tensor = tensors[0];
-        let first_shape = first_tensor.shape();
-
-        if dim > first_shape.len() {
-            return Err(anyhow!("Dimension {} is out of bounds for stacking", dim));
-        }
-
-        // Check that all tensors have the same shape
-        for (i, tensor) in tensors.iter().enumerate() {
-            if tensor.shape() != first_shape {
-                return Err(anyhow!(
-                    "Tensor {} has shape {:?}, expected {:?}",
-                    i,
-                    tensor.shape(),
-                    first_shape
-                ));
-            }
-        }
-
-        let candle_tensors: Vec<&candle_core::Tensor> =
-            tensors.iter().map(|t| t.candle_tensor()).collect();
-
-        let result_candle = candle_core::Tensor::stack(&candle_tensors, dim)?;
-
-        Ok(Tensor::from_candle(
-            result_candle,
-            first_tensor.dtype(),
-            first_tensor.layout(),
-        ))
-    }
-
     /// Repeat the tensor along specified dimensions.
     pub fn repeat(&self, repeats: &[usize]) -> Result<Tensor> {
         let shape = self.shape();

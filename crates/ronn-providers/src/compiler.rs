@@ -283,8 +283,8 @@ impl KernelCompiler {
         // Kahn's algorithm
         let mut queue: VecDeque<NodeId> = in_degree
             .iter()
-            .filter(|(_, &degree)| degree == 0)
-            .map(|(&node_id, _)| node_id)
+            .filter(|(_, degree)| **degree == 0)
+            .map(|(node_id, _)| *node_id)
             .collect();
 
         let mut result = Vec::new();

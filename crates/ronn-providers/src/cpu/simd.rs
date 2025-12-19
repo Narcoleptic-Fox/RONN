@@ -209,78 +209,86 @@ mod x86_simd {
     use std::arch::x86_64::*;
 
     pub unsafe fn avx2_add_f32_unsafe(a: &[f32], b: &[f32], result: &mut [f32]) {
-        let len = a.len();
-        let simd_len = len & !7; // Process 8 elements at a time
+        unsafe {
+            let len = a.len();
+            let simd_len = len & !7; // Process 8 elements at a time
 
-        let mut i = 0;
-        while i < simd_len {
-            let a_vec = _mm256_loadu_ps(a.as_ptr().add(i));
-            let b_vec = _mm256_loadu_ps(b.as_ptr().add(i));
-            let result_vec = _mm256_add_ps(a_vec, b_vec);
-            _mm256_storeu_ps(result.as_mut_ptr().add(i), result_vec);
-            i += 8;
-        }
+            let mut i = 0;
+            while i < simd_len {
+                let a_vec = _mm256_loadu_ps(a.as_ptr().add(i));
+                let b_vec = _mm256_loadu_ps(b.as_ptr().add(i));
+                let result_vec = _mm256_add_ps(a_vec, b_vec);
+                _mm256_storeu_ps(result.as_mut_ptr().add(i), result_vec);
+                i += 8;
+            }
 
-        // Handle remaining elements
-        for j in simd_len..len {
-            result[j] = a[j] + b[j];
+            // Handle remaining elements
+            for j in simd_len..len {
+                result[j] = a[j] + b[j];
+            }
         }
     }
 
     pub unsafe fn avx2_mul_f32_unsafe(a: &[f32], b: &[f32], result: &mut [f32]) {
-        let len = a.len();
-        let simd_len = len & !7; // Process 8 elements at a time
+        unsafe {
+            let len = a.len();
+            let simd_len = len & !7; // Process 8 elements at a time
 
-        let mut i = 0;
-        while i < simd_len {
-            let a_vec = _mm256_loadu_ps(a.as_ptr().add(i));
-            let b_vec = _mm256_loadu_ps(b.as_ptr().add(i));
-            let result_vec = _mm256_mul_ps(a_vec, b_vec);
-            _mm256_storeu_ps(result.as_mut_ptr().add(i), result_vec);
-            i += 8;
-        }
+            let mut i = 0;
+            while i < simd_len {
+                let a_vec = _mm256_loadu_ps(a.as_ptr().add(i));
+                let b_vec = _mm256_loadu_ps(b.as_ptr().add(i));
+                let result_vec = _mm256_mul_ps(a_vec, b_vec);
+                _mm256_storeu_ps(result.as_mut_ptr().add(i), result_vec);
+                i += 8;
+            }
 
-        // Handle remaining elements
-        for j in simd_len..len {
-            result[j] = a[j] * b[j];
+            // Handle remaining elements
+            for j in simd_len..len {
+                result[j] = a[j] * b[j];
+            }
         }
     }
 
     pub unsafe fn sse_add_f32_unsafe(a: &[f32], b: &[f32], result: &mut [f32]) {
-        let len = a.len();
-        let simd_len = len & !3; // Process 4 elements at a time
+        unsafe {
+            let len = a.len();
+            let simd_len = len & !3; // Process 4 elements at a time
 
-        let mut i = 0;
-        while i < simd_len {
-            let a_vec = _mm_loadu_ps(a.as_ptr().add(i));
-            let b_vec = _mm_loadu_ps(b.as_ptr().add(i));
-            let result_vec = _mm_add_ps(a_vec, b_vec);
-            _mm_storeu_ps(result.as_mut_ptr().add(i), result_vec);
-            i += 4;
-        }
+            let mut i = 0;
+            while i < simd_len {
+                let a_vec = _mm_loadu_ps(a.as_ptr().add(i));
+                let b_vec = _mm_loadu_ps(b.as_ptr().add(i));
+                let result_vec = _mm_add_ps(a_vec, b_vec);
+                _mm_storeu_ps(result.as_mut_ptr().add(i), result_vec);
+                i += 4;
+            }
 
-        // Handle remaining elements
-        for j in simd_len..len {
-            result[j] = a[j] + b[j];
+            // Handle remaining elements
+            for j in simd_len..len {
+                result[j] = a[j] + b[j];
+            }
         }
     }
 
     pub unsafe fn sse_mul_f32_unsafe(a: &[f32], b: &[f32], result: &mut [f32]) {
-        let len = a.len();
-        let simd_len = len & !3; // Process 4 elements at a time
+        unsafe {
+            let len = a.len();
+            let simd_len = len & !3; // Process 4 elements at a time
 
-        let mut i = 0;
-        while i < simd_len {
-            let a_vec = _mm_loadu_ps(a.as_ptr().add(i));
-            let b_vec = _mm_loadu_ps(b.as_ptr().add(i));
-            let result_vec = _mm_mul_ps(a_vec, b_vec);
-            _mm_storeu_ps(result.as_mut_ptr().add(i), result_vec);
-            i += 4;
-        }
+            let mut i = 0;
+            while i < simd_len {
+                let a_vec = _mm_loadu_ps(a.as_ptr().add(i));
+                let b_vec = _mm_loadu_ps(b.as_ptr().add(i));
+                let result_vec = _mm_mul_ps(a_vec, b_vec);
+                _mm_storeu_ps(result.as_mut_ptr().add(i), result_vec);
+                i += 4;
+            }
 
-        // Handle remaining elements
-        for j in simd_len..len {
-            result[j] = a[j] * b[j];
+            // Handle remaining elements
+            for j in simd_len..len {
+                result[j] = a[j] * b[j];
+            }
         }
     }
 }

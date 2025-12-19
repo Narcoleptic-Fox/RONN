@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{debug, info, warn};
 
 /// Profiling configuration
 #[derive(Debug, Clone)]
@@ -222,7 +221,7 @@ pub struct ProfileReport {
 }
 
 /// Statistics for a category
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct CategoryStats {
     /// Number of events
     pub count: usize,
@@ -239,7 +238,7 @@ pub struct CategoryStats {
 }
 
 /// Statistics for a specific operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OperationStats {
     /// Number of calls
     pub count: usize,
@@ -400,26 +399,16 @@ impl ProfileReport {
 }
 
 /// Global profiler instance
-static mut GLOBAL_PROFILER: Option<Profiler> = None;
-static PROFILER_INIT: std::sync::Once = std::sync::Once::new();
+static GLOBAL_PROFILER: std::sync::OnceLock<Profiler> = std::sync::OnceLock::new();
 
 /// Initialize global profiler
 pub fn init_profiler(config: ProfileConfig) {
-    unsafe {
-        PROFILER_INIT.call_once(|| {
-            GLOBAL_PROFILER = Some(Profiler::new(config));
-        });
-    }
+    let _ = GLOBAL_PROFILER.set(Profiler::new(config));
 }
 
 /// Get global profiler
 pub fn global_profiler() -> &'static Profiler {
-    unsafe {
-        PROFILER_INIT.call_once(|| {
-            GLOBAL_PROFILER = Some(Profiler::default());
-        });
-        GLOBAL_PROFILER.as_ref().unwrap()
-    }
+    GLOBAL_PROFILER.get_or_init(Profiler::default)
 }
 
 /// Profile a scope with the global profiler

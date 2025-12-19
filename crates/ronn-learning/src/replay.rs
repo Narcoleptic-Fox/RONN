@@ -1,6 +1,6 @@
 //! Experience Replay - Rehearsing important experiences
 
-use crate::{LearningError, Result};
+use crate::Result;
 use ronn_core::tensor::Tensor;
 use std::collections::VecDeque;
 

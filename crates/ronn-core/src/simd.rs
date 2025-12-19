@@ -135,27 +135,29 @@ fn dot_product_f32_scalar(a: &[f32], b: &[f32]) -> f32 {
 #[target_feature(enable = "avx")]
 #[inline]
 unsafe fn dot_product_f32_avx(a: &[f32], b: &[f32]) -> f32 {
-    let len = a.len();
-    let mut sum = _mm256_setzero_ps();
+    unsafe {
+        let len = a.len();
+        let mut sum = _mm256_setzero_ps();
 
-    // Process 8 elements at a time
-    let chunks = len / 8;
-    for i in 0..chunks {
-        let idx = i * 8;
-        let va = _mm256_loadu_ps(a.as_ptr().add(idx));
-        let vb = _mm256_loadu_ps(b.as_ptr().add(idx));
-        sum = _mm256_add_ps(sum, _mm256_mul_ps(va, vb));
+        // Process 8 elements at a time
+        let chunks = len / 8;
+        for i in 0..chunks {
+            let idx = i * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(idx));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(idx));
+            sum = _mm256_add_ps(sum, _mm256_mul_ps(va, vb));
+        }
+
+        // Horizontal sum
+        let mut result = horizontal_sum_avx(sum);
+
+        // Handle remaining elements
+        for i in (chunks * 8)..len {
+            result += a[i] * b[i];
+        }
+
+        result
     }
-
-    // Horizontal sum
-    let mut result = horizontal_sum_avx(sum);
-
-    // Handle remaining elements
-    for i in (chunks * 8)..len {
-        result += a[i] * b[i];
-    }
-
-    result
 }
 
 /// AVX2 + FMA implementation of dot product (fastest on modern CPUs)
@@ -163,28 +165,30 @@ unsafe fn dot_product_f32_avx(a: &[f32], b: &[f32]) -> f32 {
 #[target_feature(enable = "avx2,fma")]
 #[inline]
 unsafe fn dot_product_f32_avx2_fma(a: &[f32], b: &[f32]) -> f32 {
-    let len = a.len();
-    let mut sum = _mm256_setzero_ps();
+    unsafe {
+        let len = a.len();
+        let mut sum = _mm256_setzero_ps();
 
-    // Process 8 elements at a time with FMA
-    let chunks = len / 8;
-    for i in 0..chunks {
-        let idx = i * 8;
-        let va = _mm256_loadu_ps(a.as_ptr().add(idx));
-        let vb = _mm256_loadu_ps(b.as_ptr().add(idx));
-        // Fused multiply-add: sum = sum + (va * vb)
-        sum = _mm256_fmadd_ps(va, vb, sum);
+        // Process 8 elements at a time with FMA
+        let chunks = len / 8;
+        for i in 0..chunks {
+            let idx = i * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(idx));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(idx));
+            // Fused multiply-add: sum = sum + (va * vb)
+            sum = _mm256_fmadd_ps(va, vb, sum);
+        }
+
+        // Horizontal sum
+        let mut result = horizontal_sum_avx(sum);
+
+        // Handle remaining elements
+        for i in (chunks * 8)..len {
+            result += a[i] * b[i];
+        }
+
+        result
     }
-
-    // Horizontal sum
-    let mut result = horizontal_sum_avx(sum);
-
-    // Handle remaining elements
-    for i in (chunks * 8)..len {
-        result += a[i] * b[i];
-    }
-
-    result
 }
 
 /// Horizontal sum of AVX vector
@@ -192,16 +196,18 @@ unsafe fn dot_product_f32_avx2_fma(a: &[f32], b: &[f32]) -> f32 {
 #[target_feature(enable = "avx")]
 #[inline]
 unsafe fn horizontal_sum_avx(v: __m256) -> f32 {
-    // Split into high and low 128-bit lanes
-    let hi = _mm256_extractf128_ps(v, 1);
-    let lo = _mm256_castps256_ps128(v);
-    let sum128 = _mm_add_ps(hi, lo);
+    unsafe {
+        // Split into high and low 128-bit lanes
+        let hi = _mm256_extractf128_ps(v, 1);
+        let lo = _mm256_castps256_ps128(v);
+        let sum128 = _mm_add_ps(hi, lo);
 
-    // Horizontal add within 128-bit
-    let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
-    let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 1));
+        // Horizontal add within 128-bit
+        let sum64 = _mm_add_ps(sum128, _mm_movehl_ps(sum128, sum128));
+        let sum32 = _mm_add_ss(sum64, _mm_shuffle_ps(sum64, sum64, 1));
 
-    _mm_cvtss_f32(sum32)
+        _mm_cvtss_f32(sum32)
+    }
 }
 
 /// Vectorized element-wise addition
@@ -243,21 +249,23 @@ fn add_f32_scalar(a: &[f32], b: &[f32], result: &mut [f32]) {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn add_f32_avx2(a: &[f32], b: &[f32], result: &mut [f32]) {
-    let len = a.len();
-    let chunks = len / 8;
+    unsafe {
+        let len = a.len();
+        let chunks = len / 8;
 
-    // Process 8 elements at a time
-    for i in 0..chunks {
-        let idx = i * 8;
-        let va = _mm256_loadu_ps(a.as_ptr().add(idx));
-        let vb = _mm256_loadu_ps(b.as_ptr().add(idx));
-        let sum = _mm256_add_ps(va, vb);
-        _mm256_storeu_ps(result.as_mut_ptr().add(idx), sum);
-    }
+        // Process 8 elements at a time
+        for i in 0..chunks {
+            let idx = i * 8;
+            let va = _mm256_loadu_ps(a.as_ptr().add(idx));
+            let vb = _mm256_loadu_ps(b.as_ptr().add(idx));
+            let sum = _mm256_add_ps(va, vb);
+            _mm256_storeu_ps(result.as_mut_ptr().add(idx), sum);
+        }
 
-    // Handle remaining elements
-    for i in (chunks * 8)..len {
-        result[i] = a[i] + b[i];
+        // Handle remaining elements
+        for i in (chunks * 8)..len {
+            result[i] = a[i] + b[i];
+        }
     }
 }
 
@@ -299,35 +307,30 @@ fn relu_f32_scalar(input: &[f32], output: &mut [f32]) {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn relu_f32_avx2(input: &[f32], output: &mut [f32]) {
-    let len = input.len();
-    let chunks = len / 8;
-    let zero = _mm256_setzero_ps();
+    unsafe {
+        let len = input.len();
+        let chunks = len / 8;
+        let zero = _mm256_setzero_ps();
 
-    // Process 8 elements at a time
-    for i in 0..chunks {
-        let idx = i * 8;
-        let v = _mm256_loadu_ps(input.as_ptr().add(idx));
-        let relu = _mm256_max_ps(v, zero);
-        _mm256_storeu_ps(output.as_mut_ptr().add(idx), relu);
-    }
+        // Process 8 elements at a time
+        for i in 0..chunks {
+            let idx = i * 8;
+            let v = _mm256_loadu_ps(input.as_ptr().add(idx));
+            let relu = _mm256_max_ps(v, zero);
+            _mm256_storeu_ps(output.as_mut_ptr().add(idx), relu);
+        }
 
-    // Handle remaining elements
-    for i in (chunks * 8)..len {
-        output[i] = input[i].max(0.0);
+        // Handle remaining elements
+        for i in (chunks * 8)..len {
+            output[i] = input[i].max(0.0);
+        }
     }
 }
 
 /// Get global SIMD features (cached detection)
 pub fn simd_features() -> SimdFeatures {
-    static mut FEATURES: Option<SimdFeatures> = None;
-    static INIT: std::sync::Once = std::sync::Once::new();
-
-    unsafe {
-        INIT.call_once(|| {
-            FEATURES = Some(SimdFeatures::detect());
-        });
-        FEATURES.unwrap()
-    }
+    static FEATURES: std::sync::OnceLock<SimdFeatures> = std::sync::OnceLock::new();
+    *FEATURES.get_or_init(SimdFeatures::detect)
 }
 
 #[cfg(test)]

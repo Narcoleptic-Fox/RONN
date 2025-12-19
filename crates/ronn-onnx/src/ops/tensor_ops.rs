@@ -28,11 +28,11 @@ impl OnnxOperator for ReshapeOp {
         // Second input is the target shape tensor
         // Try i64 first (ONNX spec), fall back to f32 if needed
         let shape_usize: Vec<usize> = if let Ok(shape) = inputs[1].to_vec1::<i64>() {
-            shape.iter().map(|&x| x as usize).collect()
+            shape.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         } else {
             // Fall back to f32 and convert
             let shape_f32 = inputs[1].to_vec1::<f32>()?;
-            shape_f32.iter().map(|&x| x as usize).collect()
+            shape_f32.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         };
 
         let result = inputs[0].reshape(&shape_usize)?;
@@ -62,11 +62,11 @@ impl OnnxOperator for TransposeOp {
 
         // Get permutation from attributes
         let perm: Vec<usize> = if let Some(NodeAttribute::IntArray(p)) = attributes.get("perm") {
-            p.iter().map(|&x| x as usize).collect()
+            p.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         } else {
             // Default: reverse all dimensions
             let rank = inputs[0].rank();
-            (0..rank).rev().collect()
+            (0..rank).rev().collect::<Vec<usize>>()
         };
 
         let result = inputs[0].transpose(&perm)?;
@@ -136,15 +136,15 @@ impl OnnxOperator for SplitOp {
 
         // Get split sizes
         let splits = if let Some(NodeAttribute::IntArray(s)) = attributes.get("split") {
-            s.iter().map(|&x| x as usize).collect()
+            s.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         } else if inputs.len() > 1 {
             // Split sizes provided as second input
             // Try i64 first (ONNX spec), fall back to f32 if needed
             if let Ok(split_i64) = inputs[1].to_vec1::<i64>() {
-                split_i64.iter().map(|&x| x as usize).collect()
+                split_i64.iter().map(|&x| x as usize).collect::<Vec<usize>>()
             } else {
                 let split_f32 = inputs[1].to_vec1::<f32>()?;
-                split_f32.iter().map(|&x| x as usize).collect()
+                split_f32.iter().map(|&x| x as usize).collect::<Vec<usize>>()
             }
         } else {
             // Equal splits
@@ -226,7 +226,7 @@ impl OnnxOperator for SliceOp {
             let axes_tensor = if inputs.len() > 3 {
                 inputs[3].to_vec1::<i64>()?
             } else {
-                (0..starts_tensor.len() as i64).collect()
+                (0..starts_tensor.len() as i64).collect::<Vec<i64>>()
             };
             let steps_tensor = if inputs.len() > 4 {
                 inputs[4].to_vec1::<i64>()?
@@ -315,7 +315,7 @@ impl OnnxOperator for UnsqueezeOp {
         }
 
         let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
-            v.iter().map(|&x| x as usize).collect()
+            v.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         } else {
             return Err(OnnxError::InvalidGraph(
                 "Unsqueeze requires 'axes' attribute".to_string(),
@@ -348,10 +348,10 @@ impl OnnxOperator for ReduceMeanOp {
         }
 
         let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
-            v.iter().map(|&x| x as usize).collect()
+            v.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         } else {
             // Default: reduce all dimensions
-            (0..inputs[0].shape().len()).collect()
+            (0..inputs[0].shape().len()).collect::<Vec<usize>>()
         };
 
         let keepdims = if let Some(NodeAttribute::Int(v)) = attributes.get("keepdims") {
@@ -386,10 +386,10 @@ impl OnnxOperator for ReduceSumOp {
         }
 
         let axes = if let Some(NodeAttribute::IntArray(v)) = attributes.get("axes") {
-            v.iter().map(|&x| x as usize).collect()
+            v.iter().map(|&x| x as usize).collect::<Vec<usize>>()
         } else {
             // Default: reduce all dimensions
-            (0..inputs[0].shape().len()).collect()
+            (0..inputs[0].shape().len()).collect::<Vec<usize>>()
         };
 
         let keepdims = if let Some(NodeAttribute::Int(v)) = attributes.get("keepdims") {
