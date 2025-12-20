@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{
     CompiledKernel, DataType, ExecutionProvider, MemoryType, OperatorSpec, PerformanceProfile,
     ProviderCapability, ProviderConfig, ProviderId, ResourceRequirements, SubGraph,
@@ -15,9 +15,9 @@ use ronn_core::{
 };
 use tracing::{debug, info, warn};
 
-use super::allocator::{create_wasm_allocator, create_wasm_allocator_with_limit, WasmMemoryStats};
+use super::allocator::{WasmMemoryStats, create_wasm_allocator, create_wasm_allocator_with_limit};
 use super::bridge::{WasmBridge, WasmBridgeConfig, WorkerPool};
-use super::kernels::{create_wasm_kernel, WasmKernel, WasmSimd128Ops};
+use super::kernels::{WasmKernel, WasmSimd128Ops, create_wasm_kernel};
 
 /// WebAssembly execution provider for browser deployment.
 pub struct WasmExecutionProvider {

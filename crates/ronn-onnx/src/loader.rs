@@ -208,7 +208,7 @@ impl ModelLoader {
             _ => {
                 return Err(OnnxError::ParseError(
                     "Type is not a tensor type".to_string(),
-                ))
+                ));
             }
         };
 

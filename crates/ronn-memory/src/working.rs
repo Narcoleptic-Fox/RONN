@@ -1,6 +1,6 @@
 //! Working Memory - Short-term storage with attention weighting
 
-use crate::{current_timestamp, MemoryError, MemoryId, Result};
+use crate::{MemoryError, MemoryId, Result, current_timestamp};
 use ronn_core::tensor::Tensor;
 use std::collections::{HashMap, VecDeque};
 

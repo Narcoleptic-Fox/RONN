@@ -1,7 +1,7 @@
 // Common test utilities for ronn-graph tests
 
-use ronn_core::types::{AttributeValue, DataType, GraphEdge, GraphNode, ModelGraph};
 use ronn_core::GraphBuilder;
+use ronn_core::types::{AttributeValue, DataType, GraphEdge, GraphNode, ModelGraph};
 
 /// Create a simple linear graph for testing
 /// Input -> Conv -> ReLU -> Output

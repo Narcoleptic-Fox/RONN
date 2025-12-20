@@ -5,7 +5,7 @@
 
 use crate::tensor::Tensor;
 use crate::types::{ModelGraph, OptimizationLevel, ProviderId, SessionId};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;

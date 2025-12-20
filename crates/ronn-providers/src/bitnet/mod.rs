@@ -25,7 +25,7 @@ pub use allocator::BitNetMemoryAllocator;
 #[cfg(feature = "bitnet")]
 pub use kernels::{BitNetKernel, BitNetOperation};
 #[cfg(feature = "bitnet")]
-pub use provider::{create_bitnet_provider, BitNetExecutionProvider, BitNetProviderConfig};
+pub use provider::{BitNetExecutionProvider, BitNetProviderConfig, create_bitnet_provider};
 #[cfg(feature = "bitnet")]
 pub use quantization::{BinaryTensor, BitNetQuantizer, QuantizationMethod, TernaryTensor};
 

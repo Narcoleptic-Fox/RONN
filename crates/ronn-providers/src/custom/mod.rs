@@ -22,9 +22,9 @@ pub mod registry;
 pub mod traits;
 
 #[cfg(feature = "custom-hardware")]
-pub use example_npu::{create_npu_provider, NpuConfig, NpuProvider};
+pub use example_npu::{NpuConfig, NpuProvider, create_npu_provider};
 #[cfg(feature = "custom-hardware")]
-pub use example_tpu::{create_tpu_provider, TpuConfig, TpuProvider};
+pub use example_tpu::{TpuConfig, TpuProvider, create_tpu_provider};
 #[cfg(feature = "custom-hardware")]
 pub use registry::{CustomProviderRegistry, PluginMetadata, ProviderPlugin};
 #[cfg(feature = "custom-hardware")]
@@ -33,5 +33,7 @@ pub use traits::{CustomHardwareProvider, CustomKernel, DeviceMemory, HardwareCap
 #[cfg(not(feature = "custom-hardware"))]
 /// Custom hardware provider framework is not available - enable the "custom-hardware" feature.
 pub fn custom_hardware_not_available() -> anyhow::Result<()> {
-    anyhow::bail!("Custom hardware provider framework not available - enable the 'custom-hardware' feature flag")
+    anyhow::bail!(
+        "Custom hardware provider framework not available - enable the 'custom-hardware' feature flag"
+    )
 }

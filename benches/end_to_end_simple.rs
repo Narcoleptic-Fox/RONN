@@ -3,7 +3,7 @@
 //! This is a simplified version that works with the current API.
 //! Run with: cargo bench --bench end_to_end_simple
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use ronn_api::{Model, SessionOptions};
 use ronn_core::{DataType, Tensor, TensorLayout};
 use ronn_graph::OptimizationLevel;

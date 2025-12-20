@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use candle_core::{Device, Tensor as CandleTensor};
 use ronn_core::tensor::Tensor;
 use ronn_core::{

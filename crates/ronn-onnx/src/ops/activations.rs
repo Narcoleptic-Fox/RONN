@@ -2,8 +2,8 @@ use super::{OnnxOperator, Result};
 use crate::error::OnnxError;
 // Note: ArithmeticOps and ReductionOps may be needed for future activation functions
 // use ronn_core::ops::{ArithmeticOps, ReductionOps};
-use ronn_core::tensor::Tensor;
 use ronn_core::NodeAttribute;
+use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 
 // ReLU: max(0, x)
@@ -163,7 +163,7 @@ impl OnnxOperator for LeakyReluOp {
         let alpha = if let Some(NodeAttribute::Float(a)) = attributes.get("alpha") {
             *a as f32
         } else {
-            0.01  // Default alpha
+            0.01 // Default alpha
         };
 
         let result = inputs[0].leaky_relu(alpha)?;
@@ -195,7 +195,7 @@ impl OnnxOperator for EluOp {
         let alpha = if let Some(NodeAttribute::Float(a)) = attributes.get("alpha") {
             *a as f32
         } else {
-            1.0  // Default alpha
+            1.0 // Default alpha
         };
 
         let result = inputs[0].elu(alpha)?;

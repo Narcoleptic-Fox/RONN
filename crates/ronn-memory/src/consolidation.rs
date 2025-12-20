@@ -1,8 +1,8 @@
 //! Sleep Consolidation - Offline memory processing and pattern extraction
 
+use crate::Result;
 use crate::episodic::{Episode, EpisodicMemory};
 use crate::semantic::Concept;
-use crate::Result;
 use std::collections::HashSet;
 
 /// Configuration for sleep consolidation

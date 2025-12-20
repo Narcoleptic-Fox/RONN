@@ -1,9 +1,9 @@
 //! Unit tests for mathematical operators
 //! Tests: Add, Sub, Mul, Div, MatMul
 
+use ronn_core::NodeAttribute;
 use ronn_core::tensor::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_core::NodeAttribute;
 use ronn_onnx::{AddOp, DivOp, MatMulOp, MulOp, OnnxOperator, SubOp};
 use std::collections::HashMap;
 

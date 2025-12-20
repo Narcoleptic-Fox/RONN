@@ -1,8 +1,8 @@
 use super::{OnnxOperator, Result};
 use crate::error::OnnxError;
+use ronn_core::NodeAttribute;
 use ronn_core::ops::ShapeOps;
 use ronn_core::tensor::Tensor;
-use ronn_core::NodeAttribute;
 use std::collections::HashMap;
 
 // Reshape: change tensor shape
@@ -32,7 +32,10 @@ impl OnnxOperator for ReshapeOp {
         } else {
             // Fall back to f32 and convert
             let shape_f32 = inputs[1].to_vec1::<f32>()?;
-            shape_f32.iter().map(|&x| x as usize).collect::<Vec<usize>>()
+            shape_f32
+                .iter()
+                .map(|&x| x as usize)
+                .collect::<Vec<usize>>()
         };
 
         let result = inputs[0].reshape(&shape_usize)?;
@@ -141,10 +144,16 @@ impl OnnxOperator for SplitOp {
             // Split sizes provided as second input
             // Try i64 first (ONNX spec), fall back to f32 if needed
             if let Ok(split_i64) = inputs[1].to_vec1::<i64>() {
-                split_i64.iter().map(|&x| x as usize).collect::<Vec<usize>>()
+                split_i64
+                    .iter()
+                    .map(|&x| x as usize)
+                    .collect::<Vec<usize>>()
             } else {
                 let split_f32 = inputs[1].to_vec1::<f32>()?;
-                split_f32.iter().map(|&x| x as usize).collect::<Vec<usize>>()
+                split_f32
+                    .iter()
+                    .map(|&x| x as usize)
+                    .collect::<Vec<usize>>()
             }
         } else {
             // Equal splits
@@ -432,10 +441,12 @@ impl OnnxOperator for CastOp {
                 6 => ronn_core::DataType::I32,  // INT32
                 7 => ronn_core::DataType::I64,  // INT64
                 2 => ronn_core::DataType::U8,   // UINT8
-                _ => return Err(OnnxError::InvalidGraph(format!(
-                    "Unsupported Cast target type: {}",
-                    v
-                ))),
+                _ => {
+                    return Err(OnnxError::InvalidGraph(format!(
+                        "Unsupported Cast target type: {}",
+                        v
+                    )));
+                }
             }
         } else {
             return Err(OnnxError::InvalidGraph(
@@ -468,8 +479,8 @@ impl OnnxOperator for EmbeddingOp {
             )));
         }
 
-        let weights = inputs[0];  // Shape: [vocab_size, embedding_dim]
-        let indices = inputs[1];  // Shape: [batch_size, seq_len]
+        let weights = inputs[0]; // Shape: [vocab_size, embedding_dim]
+        let indices = inputs[1]; // Shape: [batch_size, seq_len]
 
         // Embedding is essentially a gather operation on axis 0
         let result = weights.gather(indices, 0)?;

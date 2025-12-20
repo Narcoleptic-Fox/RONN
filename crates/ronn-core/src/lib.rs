@@ -44,16 +44,16 @@ pub mod types;
 // Re-export commonly used types
 pub use error::{CoreError, Result};
 pub use graph::{GraphBuilder, GraphStatistics};
-pub use memory_pool::{global_pool, MemoryPool, PoolConfig, PoolStats, PooledBuffer};
+pub use memory_pool::{MemoryPool, PoolConfig, PoolStats, PooledBuffer, global_pool};
 pub use ops::{ArithmeticOps, MatrixOps, ReductionOps, ShapeOps};
 pub use profiling::{
-    global_profiler, init_profiler, CategoryStats, OperationStats, ProfileConfig, ProfileEvent,
-    ProfileReport, Profiler,
+    CategoryStats, OperationStats, ProfileConfig, ProfileEvent, ProfileReport, Profiler,
+    global_profiler, init_profiler,
 };
 pub use session::{
     GlobalStatistics, InferenceSession, SessionConfig, SessionManager, SessionStatistics,
 };
-pub use simd::{simd_features, SimdFeatures, SimdLevel};
+pub use simd::{SimdFeatures, SimdLevel, simd_features};
 pub use tensor::Tensor;
 pub use types::{
     AttributeValue, CompiledKernel, DataType, ExecutionProvider, GraphEdge, GraphNode, KernelStats,

@@ -16,8 +16,8 @@ use std::collections::HashMap;
 mod gpu_tests {
     use super::*;
     use ronn_providers::{
-        create_gpu_provider, create_gpu_provider_with_config, GpuExecutionProvider,
-        GpuTopologyManager, MultiGpuMemoryConfig, TopologyConfig,
+        GpuExecutionProvider, GpuTopologyManager, MultiGpuMemoryConfig, TopologyConfig,
+        create_gpu_provider, create_gpu_provider_with_config,
     };
 
     #[test]
@@ -160,8 +160,8 @@ mod gpu_tests {
 mod bitnet_tests {
     use super::*;
     use ronn_providers::{
-        create_bitnet_provider, BinaryTensor, BitNetExecutionProvider, BitNetProviderConfig,
-        BitNetQuantizer, QuantizationMethod,
+        BinaryTensor, BitNetExecutionProvider, BitNetProviderConfig, BitNetQuantizer,
+        QuantizationMethod, create_bitnet_provider,
     };
 
     #[test]
@@ -248,7 +248,7 @@ mod bitnet_tests {
 mod wasm_tests {
     use super::*;
     use ronn_providers::{
-        create_wasm_provider, WasmBridge, WasmExecutionProvider, WasmProviderConfig,
+        WasmBridge, WasmExecutionProvider, WasmProviderConfig, create_wasm_provider,
     };
 
     #[test]
@@ -321,8 +321,8 @@ mod wasm_tests {
 mod custom_hardware_tests {
     use super::*;
     use ronn_providers::{
-        create_npu_provider, create_tpu_provider, CustomProviderRegistry, NpuConfig, NpuProvider,
-        TpuConfig, TpuProvider,
+        CustomProviderRegistry, NpuConfig, NpuProvider, TpuConfig, TpuProvider,
+        create_npu_provider, create_tpu_provider,
     };
 
     #[test]

@@ -4,7 +4,7 @@
 //! reshape, flatten, squeeze, unsqueeze, and permute operations.
 
 use crate::tensor::Tensor;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// Trait for shape manipulation operations on tensors.
 pub trait ShapeOps {

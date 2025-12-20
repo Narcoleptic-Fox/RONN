@@ -13,7 +13,7 @@ use ronn_core::{
     ProviderConfig, ProviderId, SubGraph, Tensor, TensorLayout,
 };
 use ronn_providers::{
-    cpu::{detect_simd_capabilities, CpuExecutionProvider, CpuProviderConfig},
+    cpu::{CpuExecutionProvider, CpuProviderConfig, detect_simd_capabilities},
     create_cpu_provider, create_cpu_provider_with_config, create_numa_cpu_provider,
 };
 use std::collections::HashMap;

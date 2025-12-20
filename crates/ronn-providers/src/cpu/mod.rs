@@ -11,7 +11,7 @@ pub mod simd;
 pub use allocator::CpuMemoryAllocator;
 pub use kernels::CpuKernel;
 pub use provider::{
-    create_cpu_provider, create_cpu_provider_with_config, create_numa_cpu_provider,
-    CpuExecutionProvider, CpuProviderConfig,
+    CpuExecutionProvider, CpuProviderConfig, create_cpu_provider, create_cpu_provider_with_config,
+    create_numa_cpu_provider,
 };
-pub use simd::{detect_simd_capabilities, SimdCapabilities};
+pub use simd::{SimdCapabilities, detect_simd_capabilities};

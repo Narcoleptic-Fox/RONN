@@ -14,8 +14,8 @@ pub use neural_network::*;
 pub use tensor_ops::*;
 
 use crate::error::{OnnxError, Result};
-use ronn_core::tensor::Tensor;
 use ronn_core::NodeAttribute;
+use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 
 /// Trait for ONNX operator execution

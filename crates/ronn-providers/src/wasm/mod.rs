@@ -28,7 +28,7 @@ pub use bridge::{IndexedDbCache, TypedArrayInterface, WasmBridge};
 #[cfg(feature = "wasm")]
 pub use kernels::{WasmKernel, WasmSimd128Ops};
 #[cfg(feature = "wasm")]
-pub use provider::{create_wasm_provider, WasmExecutionProvider, WasmProviderConfig};
+pub use provider::{WasmExecutionProvider, WasmProviderConfig, create_wasm_provider};
 
 #[cfg(not(feature = "wasm"))]
 /// WebAssembly provider is not available - enable the "wasm" feature to use it.

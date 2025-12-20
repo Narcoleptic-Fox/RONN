@@ -2,9 +2,9 @@
 //!
 //! Decides which execution path to use based on complexity assessment.
 
+use crate::Result;
 use crate::complexity::{ComplexityAssessor, ComplexityLevel, ComplexityMetrics};
 use crate::executor::ExecutionPath;
-use crate::Result;
 use ronn_core::tensor::Tensor;
 
 /// Routing strategies for the HRM

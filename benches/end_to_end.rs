@@ -8,7 +8,7 @@
 //!
 //! Run with: cargo bench --bench end_to_end
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use ronn_api::{Model, SessionOptions};
 use ronn_core::{DataType, Tensor, TensorLayout};
 use ronn_graph::OptimizationLevel;

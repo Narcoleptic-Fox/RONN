@@ -4,7 +4,7 @@
 //! validation, topological ordering, traversal, and subgraph extraction.
 
 use crate::types::{AttributeValue, GraphEdge, GraphNode, ModelGraph, NodeId, SubGraph};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 impl ModelGraph {

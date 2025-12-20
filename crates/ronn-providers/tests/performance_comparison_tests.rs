@@ -12,8 +12,8 @@ use ronn_core::{
     TensorLayout,
 };
 use ronn_providers::{
-    cpu::CpuExecutionProvider, cpu::CpuProviderConfig, create_cpu_provider, AlignedMemoryAllocator,
-    PoolConfig, PooledMemoryAllocator, SystemMemoryAllocator,
+    AlignedMemoryAllocator, PoolConfig, PooledMemoryAllocator, SystemMemoryAllocator,
+    cpu::CpuExecutionProvider, cpu::CpuProviderConfig, create_cpu_provider,
 };
 use std::collections::HashMap;
 use std::time::Instant;

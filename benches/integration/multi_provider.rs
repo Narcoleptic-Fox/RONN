@@ -9,7 +9,7 @@
 //!
 //! Run with: cargo bench --bench integration
 
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
 use ronn_api::{Model, SessionOptions};
 use ronn_core::{DataType, Tensor, TensorLayout};
 use ronn_providers::ProviderType;

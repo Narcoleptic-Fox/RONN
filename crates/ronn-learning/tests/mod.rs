@@ -12,8 +12,8 @@ mod ewc_tests;
 mod replay_tests;
 mod timescales_tests;
 
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use ronn_learning::{ContinualLearningEngine, LearningConfig};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -260,7 +260,7 @@ fn test_no_replay_without_trigger() -> Result<()> {
 #[test]
 fn test_fast_weights_change() -> Result<()> {
     let config = LearningConfig {
-        fast_learning_rate: 0.1, // High fast rate
+        fast_learning_rate: 0.1,   // High fast rate
         slow_learning_rate: 0.001, // Low slow rate
         ..Default::default()
     };
@@ -437,7 +437,11 @@ fn test_consolidation_performance() -> Result<()> {
     let elapsed = start.elapsed();
 
     println!("Consolidation of 100 samples: {:?}", elapsed);
-    assert!(elapsed.as_millis() < 100, "Consolidation too slow: {:?}", elapsed);
+    assert!(
+        elapsed.as_millis() < 100,
+        "Consolidation too slow: {:?}",
+        elapsed
+    );
 
     Ok(())
 }

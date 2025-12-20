@@ -6,7 +6,7 @@
 use crate::ops::arithmetic::ArithmeticOps;
 use crate::ops::shape::ShapeOps;
 use crate::tensor::Tensor;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// Trait for reduction operations on tensors.
 pub trait ReductionOps {

@@ -9,7 +9,7 @@ use ronn_core::{DataType, Tensor, TensorLayout};
 use std::fmt::Debug;
 
 /// Quantization methods supported by BitNet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum QuantizationMethod {
     /// Pure binary quantization: weights ∈ {-1, +1}
     Binary,
@@ -45,15 +45,15 @@ impl BitNetQuantizer {
             ));
         }
 
-        let data = input.data();
+        let data = input.to_vec()?;
         let shape = input.shape().to_vec();
         let total_elements = data.len();
 
         // Calculate scale factor (mean absolute value)
-        let scale = data.iter().map(|&x| x.abs()).sum::<f32>() / total_elements as f32;
+        let scale = data.iter().map(|x| x.abs()).sum::<f32>() / total_elements as f32;
 
         // Quantize to {-1, +1} and pack into bits
-        let packed_bits = self.pack_binary_bits(data, scale)?;
+        let packed_bits = self.pack_binary_bits(&data, scale)?;
 
         Ok(BinaryTensor {
             packed_data: packed_bits,
@@ -71,17 +71,17 @@ impl BitNetQuantizer {
             ));
         }
 
-        let data = input.data();
+        let data = input.to_vec()?;
         let shape = input.shape().to_vec();
         let total_elements = data.len();
 
         // Calculate threshold (could be learned parameter)
-        let threshold = data.iter().map(|&x| x.abs()).sum::<f32>() / total_elements as f32 * 0.7;
+        let threshold = data.iter().map(|x| x.abs()).sum::<f32>() / total_elements as f32 * 0.7;
 
         // Calculate scale factor for non-zero elements
         let non_zero_values: Vec<f32> = data
             .iter()
-            .filter_map(|&x| {
+            .filter_map(|x| {
                 if x.abs() > threshold {
                     Some(x.abs())
                 } else {
@@ -97,7 +97,7 @@ impl BitNetQuantizer {
         };
 
         // Quantize to {-1, 0, +1} and pack
-        let packed_bits = self.pack_ternary_bits(data, threshold, scale)?;
+        let packed_bits = self.pack_ternary_bits(&data, threshold, scale)?;
 
         Ok(TernaryTensor {
             packed_data: packed_bits,

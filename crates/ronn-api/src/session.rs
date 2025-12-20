@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use dashmap::DashMap;
-use ronn_core::tensor::Tensor;
 use ronn_core::ModelGraph;
+use ronn_core::tensor::Tensor;
 use ronn_graph::{OptimizationLevel, Optimizer};
 use ronn_onnx::LoadedModel;
 use ronn_providers::{ProviderRegistry, ProviderType};

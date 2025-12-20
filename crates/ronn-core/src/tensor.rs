@@ -5,7 +5,7 @@
 
 use crate::ops::shape::ShapeOps;
 use crate::types::{DataType, Tensor as RonnTensor, TensorLayout};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use candle_core::{DType, Device, Module, Shape, Tensor as CandleTensor};
 
 /// Enhanced Tensor implementation with Candle backend.
@@ -279,7 +279,7 @@ impl Tensor {
                         "Cannot broadcast shapes: dimension {} vs {}",
                         d1,
                         d2
-                    ))
+                    ));
                 }
             }
         }
@@ -411,7 +411,11 @@ impl Tensor {
 
         let shape = self.shape();
         if dim >= shape.len() {
-            return Err(anyhow!("Dimension {} out of bounds for shape {:?}", dim, shape));
+            return Err(anyhow!(
+                "Dimension {} out of bounds for shape {:?}",
+                dim,
+                shape
+            ));
         }
 
         let dim_size = shape[dim];
@@ -500,7 +504,11 @@ impl Tensor {
         // Create layer norm config
         // If scale and bias provided, use them
         let normalized = if let (Some(s), Some(b)) = (scale, bias) {
-            let ln = LayerNorm::new(s.candle_tensor.clone(), b.candle_tensor.clone(), epsilon as f64);
+            let ln = LayerNorm::new(
+                s.candle_tensor.clone(),
+                b.candle_tensor.clone(),
+                epsilon as f64,
+            );
             ln.forward(&self.candle_tensor)?
         } else {
             // Simple normalization without learnable parameters
@@ -511,7 +519,9 @@ impl Tensor {
                 .sqr()?
                 .mean_keepdim(axis as usize)?;
             let std = (variance + epsilon as f64)?.sqrt()?;
-            self.candle_tensor.broadcast_sub(&mean)?.broadcast_div(&std)?
+            self.candle_tensor
+                .broadcast_sub(&mean)?
+                .broadcast_div(&std)?
         };
 
         Ok(Self::from_candle(normalized, self.dtype, self.layout))
@@ -608,7 +618,9 @@ impl Tensor {
         let output = attention_weights.matmul(&v)?;
 
         // Reshape back: (batch, num_heads, seq_len, d_k) -> (batch, seq_len, d_model)
-        let output = output.transpose(1, 2)?.reshape(&[batch_size, seq_len, d_model])?;
+        let output = output
+            .transpose(1, 2)?
+            .reshape(&[batch_size, seq_len, d_model])?;
 
         Ok(Self::from_candle(output, self.dtype, self.layout))
     }
@@ -770,7 +782,6 @@ impl Tensor {
         Ok(value)
     }
 }
-
 
 /// Convert RONN DataType to Candle DType.
 fn dtype_to_candle(dtype: &DataType) -> Result<DType> {

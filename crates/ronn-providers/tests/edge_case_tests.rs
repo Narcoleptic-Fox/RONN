@@ -14,8 +14,8 @@ use ronn_core::{
     TensorAllocator, TensorLayout,
 };
 use ronn_providers::{
-    cpu::CpuExecutionProvider, cpu::CpuProviderConfig, create_cpu_provider, PoolConfig,
-    PooledMemoryAllocator, ProviderRegistry, SystemMemoryAllocator,
+    PoolConfig, PooledMemoryAllocator, ProviderRegistry, SystemMemoryAllocator,
+    cpu::CpuExecutionProvider, cpu::CpuProviderConfig, create_cpu_provider,
 };
 use std::collections::HashMap;
 use std::sync::Arc;

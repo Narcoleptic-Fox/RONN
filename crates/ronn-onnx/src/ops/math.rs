@@ -1,8 +1,8 @@
 use super::{OnnxOperator, Result};
 use crate::error::OnnxError;
+use ronn_core::NodeAttribute;
 use ronn_core::ops::{ArithmeticOps, MatrixOps};
 use ronn_core::tensor::Tensor;
-use ronn_core::NodeAttribute;
 use std::collections::HashMap;
 
 // Add: element-wise addition with broadcasting

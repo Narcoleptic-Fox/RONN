@@ -3,7 +3,7 @@
 //! This module provides seamless integration between Rust/WASM and JavaScript,
 //! including TypedArray conversion, IndexedDB caching, and Web Worker support.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{DataType, Tensor, TensorLayout};
 use std::collections::HashMap;
 
@@ -66,35 +66,32 @@ pub struct TypedArrayInterface;
 impl TypedArrayInterface {
     /// Convert Rust tensor to JavaScript TypedArray.
     pub fn tensor_to_typed_array(&self, tensor: &Tensor) -> Result<TypedArrayData> {
+        let data = tensor.to_vec()?;
         match tensor.dtype() {
-            DataType::F32 => Ok(TypedArrayData::Float32(tensor.data().to_vec())),
+            DataType::F32 => Ok(TypedArrayData::Float32(data)),
             DataType::F16 => {
                 // Convert F16 data to F32 for JavaScript compatibility
-                let f32_data = tensor.data().to_vec(); // Simplified - would need proper F16 conversion
-                Ok(TypedArrayData::Float32(f32_data))
+                // Simplified - would need proper F16 conversion
+                Ok(TypedArrayData::Float32(data))
             }
             DataType::U8 => {
-                let u8_data: Vec<u8> = tensor.data().iter().map(|&x| x as u8).collect();
+                let u8_data: Vec<u8> = data.iter().map(|&x| x as u8).collect();
                 Ok(TypedArrayData::Uint8(u8_data))
             }
             DataType::I8 => {
-                let i8_data: Vec<i8> = tensor.data().iter().map(|&x| x as i8).collect();
+                let i8_data: Vec<i8> = data.iter().map(|&x| x as i8).collect();
                 Ok(TypedArrayData::Int8(i8_data))
             }
             DataType::I32 => {
-                let i32_data: Vec<i32> = tensor.data().iter().map(|&x| x as i32).collect();
+                let i32_data: Vec<i32> = data.iter().map(|&x| x as i32).collect();
                 Ok(TypedArrayData::Int32(i32_data))
             }
             DataType::U32 => {
-                let u32_data: Vec<u32> = tensor.data().iter().map(|&x| x as u32).collect();
+                let u32_data: Vec<u32> = data.iter().map(|&x| x as u32).collect();
                 Ok(TypedArrayData::Uint32(u32_data))
             }
             DataType::Bool => {
-                let u8_data: Vec<u8> = tensor
-                    .data()
-                    .iter()
-                    .map(|&x| if x > 0.5 { 1 } else { 0 })
-                    .collect();
+                let u8_data: Vec<u8> = data.iter().map(|&x| if x > 0.5 { 1 } else { 0 }).collect();
                 Ok(TypedArrayData::Uint8(u8_data))
             }
             _ => Err(anyhow!(
@@ -494,7 +491,7 @@ mod tests {
 
         // Verify roundtrip
         assert_eq!(original.shape(), imported.shape());
-        assert_eq!(original.data(), imported.data());
+        assert_eq!(original.to_vec().unwrap(), imported.to_vec().unwrap());
 
         Ok(())
     }

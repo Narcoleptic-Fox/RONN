@@ -3,13 +3,13 @@
 //! Provides static and dynamic batching to maximize GPU/CPU utilization
 //! and achieve 3-10x throughput improvements.
 
-use crate::error::{Error, Result};
 use crate::InferenceSession;
+use crate::error::{Error, Result};
 use ronn_core::tensor::Tensor;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio::time::timeout;
 
 /// Batch processing strategy
@@ -248,8 +248,8 @@ impl BatchProcessor {
 
             match timeout(remaining, request_rx.recv()).await {
                 Ok(Some(request)) => batch.push(request),
-                Ok(None) => break,      // Channel closed
-                Err(_) => break,         // Timeout
+                Ok(None) => break, // Channel closed
+                Err(_) => break,   // Timeout
             }
         }
 
@@ -329,9 +329,9 @@ impl BatchProcessor {
             let tensors: std::result::Result<Vec<_>, Error> = batch
                 .iter()
                 .map(|req| {
-                    req.inputs
-                        .get(&name)
-                        .ok_or_else(|| Error::InvalidInput(format!("Missing input tensor: {}", name)))
+                    req.inputs.get(&name).ok_or_else(|| {
+                        Error::InvalidInput(format!("Missing input tensor: {}", name))
+                    })
                 })
                 .collect();
             let tensors = tensors?;
@@ -354,7 +354,8 @@ impl BatchProcessor {
 
         for (name, batched_tensor) in combined {
             // Split along batch dimension (dim 0)
-            let individual_tensors = batched_tensor.split(batch_size, 0)
+            let individual_tensors = batched_tensor
+                .split(batch_size, 0)
                 .map_err(|e| Error::InferenceError(format!("Failed to split tensors: {}", e)))?;
 
             for (i, tensor) in individual_tensors.into_iter().enumerate() {

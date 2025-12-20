@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use ronn_core::{
     CompiledKernel, DataType, ExecutionProvider, MemoryType, OperatorSpec, PerformanceProfile,
@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 use super::{
     allocator::{create_cpu_allocator, create_numa_cpu_allocator},
     kernels::CpuKernel,
-    simd::{detect_simd_capabilities, SimdCapabilities},
+    simd::{SimdCapabilities, detect_simd_capabilities},
 };
 
 /// CPU execution provider with SIMD optimizations and multi-threading.

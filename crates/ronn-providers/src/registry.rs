@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use ronn_core::{
     CompiledKernel, ExecutionProvider, OperatorSpec, ProviderCapability, ProviderId, SubGraph,

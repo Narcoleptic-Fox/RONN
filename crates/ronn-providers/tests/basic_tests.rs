@@ -4,8 +4,8 @@
 
 use ronn_core::{DataType, GraphNode, SubGraph, Tensor, TensorLayout};
 use ronn_providers::{
-    create_cpu_provider, create_provider_system, GpuTopologyManager, ProviderRegistry,
-    TopologyConfig,
+    GpuTopologyManager, ProviderRegistry, TopologyConfig, create_cpu_provider,
+    create_provider_system,
 };
 use std::collections::HashMap;
 

@@ -5,9 +5,9 @@
 //! so these tests focus on input validation, attribute parsing, and ensuring
 //! proper error handling.
 
+use ronn_core::NodeAttribute;
 use ronn_core::tensor::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_core::NodeAttribute;
 use ronn_onnx::{AvgPoolOp, BatchNormOp, Conv2dOp, MaxPoolOp, OnnxOperator};
 use std::collections::HashMap;
 

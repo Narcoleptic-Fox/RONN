@@ -6,7 +6,7 @@
 use anyhow::Result;
 use ronn_core::tensor::Tensor;
 use ronn_core::{DataType, GraphNode, SubGraph, TensorLayout};
-use ronn_providers::{create_cpu_provider, ProviderRegistry};
+use ronn_providers::{ProviderRegistry, create_cpu_provider};
 use std::collections::HashMap;
 
 /// Test basic CPU provider creation and capability reporting.

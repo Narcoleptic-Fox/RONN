@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{CompiledKernel, DataType, KernelStats, MemoryUsage, Tensor, TensorLayout};
 
 /// WASM SIMD128 operations for vectorized computation.
@@ -250,8 +250,10 @@ impl WasmKernel {
             ));
         }
 
-        let mut result_data = vec![0.0f32; a.data().len()];
-        WasmSimd128Ops::simd_add_f32(a.data(), b.data(), &mut result_data)?;
+        let a_data = a.to_vec()?;
+        let b_data = b.to_vec()?;
+        let mut result_data = vec![0.0f32; a_data.len()];
+        WasmSimd128Ops::simd_add_f32(&a_data, &b_data, &mut result_data)?;
 
         let result = Tensor::from_data(
             result_data,
@@ -280,8 +282,10 @@ impl WasmKernel {
             ));
         }
 
-        let mut result_data = vec![0.0f32; a.data().len()];
-        WasmSimd128Ops::simd_mul_f32(a.data(), b.data(), &mut result_data)?;
+        let a_data = a.to_vec()?;
+        let b_data = b.to_vec()?;
+        let mut result_data = vec![0.0f32; a_data.len()];
+        WasmSimd128Ops::simd_mul_f32(&a_data, &b_data, &mut result_data)?;
 
         let result = Tensor::from_data(
             result_data,
@@ -322,8 +326,10 @@ impl WasmKernel {
             ));
         }
 
+        let a_data = a.to_vec()?;
+        let b_data = b.to_vec()?;
         let mut result_data = vec![0.0f32; m * n];
-        WasmSimd128Ops::simd_matmul_f32(a.data(), b.data(), &mut result_data, m, n, k)?;
+        WasmSimd128Ops::simd_matmul_f32(&a_data, &b_data, &mut result_data, m, n, k)?;
 
         let result = Tensor::from_data(
             result_data,
@@ -342,9 +348,10 @@ impl WasmKernel {
         }
 
         let input = &inputs[0];
-        let mut result_data = vec![0.0f32; input.data().len()];
+        let input_data = input.to_vec()?;
+        let mut result_data = vec![0.0f32; input_data.len()];
 
-        WasmSimd128Ops::simd_relu_f32(input.data(), &mut result_data)?;
+        WasmSimd128Ops::simd_relu_f32(&input_data, &mut result_data)?;
 
         let result = Tensor::from_data(
             result_data,
@@ -363,8 +370,8 @@ impl WasmKernel {
         }
 
         let input = &inputs[0];
-        let result_data: Vec<f32> = input
-            .data()
+        let input_data = input.to_vec()?;
+        let result_data: Vec<f32> = input_data
             .iter()
             .map(|&x| 1.0 / (1.0 + (-x).exp()))
             .collect();
@@ -386,7 +393,7 @@ impl WasmKernel {
         }
 
         let input = &inputs[0];
-        let data = input.data();
+        let data = input.to_vec()?;
 
         // Find maximum value for numerical stability
         let max_val = data.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
@@ -529,7 +536,7 @@ mod tests {
         let results = kernel.execute(&[a, b])?;
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].data(), &[5.0, 7.0, 9.0]);
+        assert_eq!(results[0].to_vec().unwrap(), vec![5.0, 7.0, 9.0]);
 
         Ok(())
     }
@@ -574,7 +581,7 @@ mod tests {
         let results = kernel.execute(&[input])?;
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].data(), &[0.0, 0.0, 1.0, 0.0, 3.0]);
+        assert_eq!(results[0].to_vec().unwrap(), vec![0.0, 0.0, 1.0, 0.0, 3.0]);
 
         Ok(())
     }

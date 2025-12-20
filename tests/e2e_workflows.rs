@@ -5,8 +5,8 @@
 //! of all RONN components working together.
 
 use ronn_api::prelude::*;
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -123,7 +123,8 @@ fn test_e2e_multiple_sessions_sequential() -> Result<()> {
         let session = model.create_session_default()?;
 
         let data = vec![(i as f32); 10];
-        let input_tensor = Tensor::from_data(data, vec![1, 10], DataType::F32, TensorLayout::RowMajor)?;
+        let input_tensor =
+            Tensor::from_data(data, vec![1, 10], DataType::F32, TensorLayout::RowMajor)?;
         let mut inputs = HashMap::new();
         inputs.insert("input".to_string(), input_tensor);
 
@@ -190,8 +191,12 @@ fn test_e2e_with_hrm_routing() -> Result<()> {
 
     // Test with simple input (should use System 1)
     let simple_data = vec![1.0f32; 10];
-    let simple_tensor =
-        Tensor::from_data(simple_data, vec![1, 10], DataType::F32, TensorLayout::RowMajor)?;
+    let simple_tensor = Tensor::from_data(
+        simple_data,
+        vec![1, 10],
+        DataType::F32,
+        TensorLayout::RowMajor,
+    )?;
     let mut inputs = HashMap::new();
     inputs.insert("input".to_string(), simple_tensor);
 

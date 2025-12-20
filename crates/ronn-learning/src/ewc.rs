@@ -1,7 +1,7 @@
 //! Elastic Weight Consolidation (EWC) - Protecting important weights
 
-use crate::timescales::WeightUpdate;
 use crate::Result;
+use crate::timescales::WeightUpdate;
 use ronn_core::tensor::Tensor;
 
 /// Importance weights for EWC

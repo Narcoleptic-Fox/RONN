@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use ronn_core::{DataType, MemoryInfo, TensorAllocator, TensorBuffer};
 
-use super::simd::{detect_simd_capabilities, get_optimal_vector_width, SimdCapabilities};
+use super::simd::{SimdCapabilities, detect_simd_capabilities, get_optimal_vector_width};
 use crate::allocator::{AlignedMemoryAllocator, PoolConfig, PooledMemoryAllocator};
 
 /// CPU-specific memory allocator with SIMD alignment and optional NUMA awareness.

@@ -8,8 +8,8 @@
 //! - Performance characteristics
 //! - Statistics tracking
 
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use ronn_hrm::router::{HrmRouter, RoutingDecision, RoutingStrategy};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -222,8 +222,7 @@ fn test_decision_at_least_one_system() -> Result<()> {
     for strategy in strategies {
         let router = HrmRouter::new(strategy);
         let data = vec![1.0f32; 100];
-        let tensor =
-            Tensor::from_data(data, vec![1, 100], DataType::F32, TensorLayout::RowMajor)?;
+        let tensor = Tensor::from_data(data, vec![1, 100], DataType::F32, TensorLayout::RowMajor)?;
 
         let decision = router.route(&tensor)?;
 
@@ -288,8 +287,7 @@ fn test_statistics_multiple_routes() -> Result<()> {
     // Route multiple tensors
     for size in [10, 100, 1000, 10000] {
         let data = vec![1.0f32; size];
-        let tensor =
-            Tensor::from_data(data, vec![1, size], DataType::F32, TensorLayout::RowMajor)?;
+        let tensor = Tensor::from_data(data, vec![1, size], DataType::F32, TensorLayout::RowMajor)?;
         router.route(&tensor)?;
     }
 
@@ -309,8 +307,7 @@ fn test_statistics_hybrid_routes() -> Result<()> {
     // Route multiple medium-complexity tensors
     for i in 0..10 {
         let data: Vec<f32> = (0..100).map(|x| (x + i) as f32).collect();
-        let tensor =
-            Tensor::from_data(data, vec![1, 100], DataType::F32, TensorLayout::RowMajor)?;
+        let tensor = Tensor::from_data(data, vec![1, 100], DataType::F32, TensorLayout::RowMajor)?;
         router.route(&tensor)?;
     }
 
@@ -413,11 +410,7 @@ fn test_routing_performance() -> Result<()> {
 
     // Routing should be very fast (< 5ms target, as per TASKS.md: <2µs for decisions)
     // But complexity assessment might take longer for large tensors
-    assert!(
-        elapsed.as_millis() < 5,
-        "Routing too slow: {:?}",
-        elapsed
-    );
+    assert!(elapsed.as_millis() < 5, "Routing too slow: {:?}", elapsed);
 
     Ok(())
 }
@@ -467,8 +460,7 @@ fn test_strategy_differences() -> Result<()> {
 
     // AlwaysSystem1 should differ from AlwaysSystem2
     assert_ne!(
-        decisions[0].use_system1,
-        decisions[1].use_system1,
+        decisions[0].use_system1, decisions[1].use_system1,
         "AlwaysSystem1 and AlwaysSystem2 should differ"
     );
 

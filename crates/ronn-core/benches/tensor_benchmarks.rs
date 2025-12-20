@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench --package ronn-core
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use ronn_core::{ArithmeticOps, DataType, MatrixOps, ReductionOps, ShapeOps, Tensor, TensorLayout};
 
 fn create_tensor(shape: Vec<usize>) -> Tensor {

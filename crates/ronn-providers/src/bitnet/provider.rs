@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{
     CompiledKernel, DataType, ExecutionProvider, GraphNode, MemoryType, OperatorSpec,
     PerformanceProfile, ProviderCapability, ProviderConfig, ProviderId, ResourceRequirements,
@@ -14,10 +14,10 @@ use ronn_core::{
 };
 use tracing::{debug, info, warn};
 
-use super::allocator::{create_bitnet_allocator, BitNetMemoryStats};
+use super::allocator::{BitNetMemoryStats, create_bitnet_allocator};
 use super::kernels::{
-    create_binary_elementwise_kernel, create_binary_matmul_kernel, create_ternary_matmul_kernel,
-    BitNetKernel, BitNetOperation,
+    BitNetKernel, BitNetOperation, create_binary_elementwise_kernel, create_binary_matmul_kernel,
+    create_ternary_matmul_kernel,
 };
 use super::quantization::{BitNetQuantizer, QuantizationMethod};
 

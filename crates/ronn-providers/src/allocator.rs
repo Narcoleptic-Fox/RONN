@@ -3,11 +3,11 @@
 //! This module provides various memory allocation strategies including
 //! system memory, pooled memory, and SIMD-aligned allocations.
 
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{DataType, MemoryInfo, MemoryType, TensorAllocator, TensorBuffer};
 use tracing::debug;
 

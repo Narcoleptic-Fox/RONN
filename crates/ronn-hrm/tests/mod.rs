@@ -12,8 +12,8 @@ mod complexity_tests;
 mod executor_tests;
 mod router_tests;
 
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use ronn_hrm::{HrmConfig, HrmModule, RoutingStrategy};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -104,8 +104,7 @@ fn test_hrm_statistics_tracking() -> Result<()> {
     // Process multiple inputs
     for size in [10, 100, 1000, 10000] {
         let data = vec![1.0f32; size];
-        let input =
-            Tensor::from_data(data, vec![1, size], DataType::F32, TensorLayout::RowMajor)?;
+        let input = Tensor::from_data(data, vec![1, size], DataType::F32, TensorLayout::RowMajor)?;
         hrm.process(&input)?;
     }
 
@@ -327,8 +326,7 @@ fn test_hrm_stress_many_small_inputs() -> Result<()> {
     // Process many small inputs
     for i in 0..1000 {
         let data = vec![(i % 100) as f32; 10];
-        let input =
-            Tensor::from_data(data, vec![1, 10], DataType::F32, TensorLayout::RowMajor)?;
+        let input = Tensor::from_data(data, vec![1, 10], DataType::F32, TensorLayout::RowMajor)?;
         hrm.process(&input)?;
     }
 

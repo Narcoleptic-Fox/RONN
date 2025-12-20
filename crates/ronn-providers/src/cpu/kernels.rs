@@ -7,13 +7,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use rayon::prelude::*;
 use ronn_core::tensor::Tensor;
 use ronn_core::{CompiledKernel, DataType, KernelStats, MemoryUsage, SubGraph, TensorLayout};
 use tracing::{debug, warn};
 
-use crate::cpu::simd::{simd_add_f32, simd_matmul_f32, simd_mul_f32, SimdCapabilities};
+use crate::cpu::simd::{SimdCapabilities, simd_add_f32, simd_matmul_f32, simd_mul_f32};
 
 /// CPU-compiled kernel for subgraph execution.
 #[derive(Debug)]

@@ -1,9 +1,9 @@
 //! Unit tests for activation operators
 //! Tests: Relu, Sigmoid, Tanh, Softmax, Gelu
 
+use ronn_core::NodeAttribute;
 use ronn_core::tensor::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_core::NodeAttribute;
 use ronn_onnx::{GeluOp, OnnxOperator, ReluOp, SigmoidOp, SoftmaxOp, TanhOp};
 use std::collections::HashMap;
 

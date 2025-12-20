@@ -66,7 +66,7 @@ pub fn shape_from_value_info(value_info: &proto::ValueInfoProto) -> Result<Vec<u
         _ => {
             return Err(OnnxError::ParseError(
                 "ValueInfo type is not tensor".to_string(),
-            ))
+            ));
         }
     };
 

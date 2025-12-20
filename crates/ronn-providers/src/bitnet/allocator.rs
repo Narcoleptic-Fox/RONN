@@ -4,11 +4,11 @@
 //! providing efficient allocation and deallocation with proper alignment
 //! for SIMD operations on packed bit data.
 
-use std::alloc::{alloc, dealloc, Layout};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::alloc::{Layout, alloc, dealloc};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{DataType, MemoryInfo, MemoryType, TensorAllocator, TensorBuffer};
 
 /// Memory allocator optimized for BitNet bit-packed tensors.
@@ -42,11 +42,11 @@ impl BitNetMemoryAllocator {
         match dtype {
             DataType::Bool => {
                 // 1 bit per element for binary quantization
-                (element_count + 7) / 8 // Round up to nearest byte
+                Ok((element_count + 7) / 8) // Round up to nearest byte
             }
             DataType::U8 => {
                 // Use U8 to represent 2-bit ternary (4 elements per byte)
-                (element_count + 3) / 4 // Round up to nearest 4 elements
+                Ok((element_count + 3) / 4) // Round up to nearest 4 elements
             }
             DataType::F32 | DataType::F16 | DataType::BF16 => {
                 // Standard tensor allocation (for activations)
@@ -55,14 +55,12 @@ impl BitNetMemoryAllocator {
                     DataType::F16 | DataType::BF16 => std::mem::size_of::<u16>(),
                     _ => unreachable!(),
                 };
-                element_count * element_size
+                Ok(element_count * element_size)
             }
-            _ => {
-                return Err(anyhow!(
-                    "Unsupported data type for BitNet allocator: {:?}",
-                    dtype
-                ))
-            }
+            _ => Err(anyhow!(
+                "Unsupported data type for BitNet allocator: {:?}",
+                dtype
+            )),
         }
     }
 

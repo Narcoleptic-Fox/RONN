@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use candle_core::{Device, Tensor as CandleTensor};
 
 /// CUDA kernel compiler and cache manager.
@@ -200,7 +200,7 @@ impl CudaKernelManager {
                 return Err(anyhow!(
                     "No optimized CUDA kernel available for operation: {}",
                     op_type
-                ))
+                ));
             }
         };
 

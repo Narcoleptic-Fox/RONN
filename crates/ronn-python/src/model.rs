@@ -44,7 +44,11 @@ impl PyModel {
     ///
     /// List of input tensor names
     fn input_names(&self) -> Vec<String> {
-        self.inner.input_names().iter().map(|s| s.to_string()).collect()
+        self.inner
+            .input_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// Get model output names
@@ -53,7 +57,11 @@ impl PyModel {
     ///
     /// List of output tensor names
     fn output_names(&self) -> Vec<String> {
-        self.inner.output_names().iter().map(|s| s.to_string()).collect()
+        self.inner
+            .output_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     /// Create an inference session
@@ -88,7 +96,12 @@ impl PyModel {
             "O1" | "basic" => ronn_graph::OptimizationLevel::O1,
             "O2" | "default" => ronn_graph::OptimizationLevel::O2,
             "O3" | "aggressive" => ronn_graph::OptimizationLevel::O3,
-            _ => return Err(RonnError(format!("Invalid optimization level: {}. Use 'none'/'O0', 'basic'/'O1', 'default'/'O2', or 'aggressive'/'O3'", optimization_level))),
+            _ => {
+                return Err(RonnError(format!(
+                    "Invalid optimization level: {}. Use 'none'/'O0', 'basic'/'O1', 'default'/'O2', or 'aggressive'/'O3'",
+                    optimization_level
+                )));
+            }
         };
 
         // Parse provider
@@ -97,7 +110,12 @@ impl PyModel {
             "gpu" | "cuda" => ronn_core::ProviderId::GPU,
             "bitnet" => ronn_core::ProviderId::BitNet,
             "wasm" => ronn_core::ProviderId::WebAssembly,
-            _ => return Err(RonnError(format!("Invalid provider: {}. Use 'cpu', 'gpu', 'bitnet', or 'wasm'", provider))),
+            _ => {
+                return Err(RonnError(format!(
+                    "Invalid provider: {}. Use 'cpu', 'gpu', 'bitnet', or 'wasm'",
+                    provider
+                )));
+            }
         };
 
         // Build session options
@@ -110,7 +128,10 @@ impl PyModel {
         }
 
         // Create session
-        let session = self.inner.create_session(options).map_err(RonnError::from)?;
+        let session = self
+            .inner
+            .create_session(options)
+            .map_err(RonnError::from)?;
 
         Ok(PySession::new(session))
     }

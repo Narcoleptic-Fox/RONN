@@ -354,7 +354,10 @@ impl ProfileReport {
     /// Print a human-readable report
     pub fn print(&self) {
         println!("\n=== Profiling Report ===");
-        println!("Total Duration: {:.2}ms\n", self.total_duration.as_secs_f64() * 1000.0);
+        println!(
+            "Total Duration: {:.2}ms\n",
+            self.total_duration.as_secs_f64() * 1000.0
+        );
 
         println!("By Category:");
         let mut categories: Vec<_> = self.by_category.iter().collect();

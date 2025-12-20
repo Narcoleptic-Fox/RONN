@@ -2,7 +2,7 @@
 //
 // Run with: cargo bench --package ronn-graph
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use ronn_core::{GraphBuilder, ModelGraph};
 use ronn_graph::{
     ConstantFoldingPass, CpuOptimizationPass, DeadCodeEliminationPass, GpuOptimizationPass,

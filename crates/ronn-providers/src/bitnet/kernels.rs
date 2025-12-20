@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{CompiledKernel, KernelStats, MemoryUsage, SubGraph, Tensor};
 
 use super::quantization::{BinaryTensor, BitNetQuantizer, QuantizationMethod, TernaryTensor};
@@ -106,8 +106,8 @@ impl BitNetKernel {
                     let end_bit = (start_bit + 64).min(k);
                     let bits_in_chunk = end_bit - start_bit;
 
-                    let a_chunk = self.extract_bits_as_u64(a, i * k + start_bit, bits_in_chunk);
-                    let b_chunk = self.extract_bits_as_u64(b, start_bit * n + j, bits_in_chunk);
+                    let a_chunk = Self::extract_bits_as_u64(a, i * k + start_bit, bits_in_chunk);
+                    let b_chunk = Self::extract_bits_as_u64(b, start_bit * n + j, bits_in_chunk);
 
                     // XNOR operation: ~(a XOR b) gives 1 where bits match
                     let xnor_result = !(a_chunk ^ b_chunk);

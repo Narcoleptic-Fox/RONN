@@ -121,10 +121,7 @@ impl AsyncSession {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn run(
-        &self,
-        inputs: HashMap<String, Tensor>,
-    ) -> Result<HashMap<String, Tensor>> {
+    pub async fn run(&self, inputs: HashMap<String, Tensor>) -> Result<HashMap<String, Tensor>> {
         // Clone the inner Arc so we can move it into the blocking task
         let session_arc = Arc::clone(&self.inner);
 
@@ -224,10 +221,7 @@ impl AsyncBatchProcessor {
     /// # Returns
     ///
     /// Output tensors for this specific request
-    pub async fn infer(
-        &self,
-        inputs: HashMap<String, Tensor>,
-    ) -> Result<HashMap<String, Tensor>> {
+    pub async fn infer(&self, inputs: HashMap<String, Tensor>) -> Result<HashMap<String, Tensor>> {
         // For now, just pass through to session
         // In a full implementation, this would use a channel to collect
         // requests and batch them together

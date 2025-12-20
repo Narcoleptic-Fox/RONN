@@ -68,10 +68,7 @@ impl PySession {
                 )
                 .map_err(RonnError::from)?
             } else {
-                return Err(RonnError(format!(
-                    "Unsupported input type for '{}'",
-                    name
-                )));
+                return Err(RonnError(format!("Unsupported input type for '{}'", name)));
             };
 
             input_tensors.insert(name, tensor);

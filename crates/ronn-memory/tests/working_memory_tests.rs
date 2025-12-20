@@ -1,7 +1,7 @@
 //! Comprehensive tests for working memory functionality.
 
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use ronn_memory::working::WorkingMemory;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -35,8 +35,7 @@ fn test_working_memory_capacity_eviction() -> Result<()> {
     // Store more than capacity
     for i in 0..10 {
         let data = vec![i as f32; 3];
-        let tensor =
-            Tensor::from_data(data, vec![1, 3], DataType::F32, TensorLayout::RowMajor)?;
+        let tensor = Tensor::from_data(data, vec![1, 3], DataType::F32, TensorLayout::RowMajor)?;
         memory.store(tensor, 0.5)?;
     }
 
@@ -52,12 +51,22 @@ fn test_working_memory_importance_ordering() -> Result<()> {
 
     // Store items with different importance
     let low_id = memory.store(
-        Tensor::from_data(vec![1.0f32; 3], vec![1, 3], DataType::F32, TensorLayout::RowMajor)?,
+        Tensor::from_data(
+            vec![1.0f32; 3],
+            vec![1, 3],
+            DataType::F32,
+            TensorLayout::RowMajor,
+        )?,
         0.2,
     )?;
 
     let high_id = memory.store(
-        Tensor::from_data(vec![2.0f32; 3], vec![1, 3], DataType::F32, TensorLayout::RowMajor)?,
+        Tensor::from_data(
+            vec![2.0f32; 3],
+            vec![1, 3],
+            DataType::F32,
+            TensorLayout::RowMajor,
+        )?,
         0.9,
     )?;
 
@@ -87,8 +96,7 @@ fn test_working_memory_recency() -> Result<()> {
     let mut ids = Vec::new();
     for i in 0..5 {
         let data = vec![i as f32; 3];
-        let tensor =
-            Tensor::from_data(data, vec![1, 3], DataType::F32, TensorLayout::RowMajor)?;
+        let tensor = Tensor::from_data(data, vec![1, 3], DataType::F32, TensorLayout::RowMajor)?;
         let id = memory.store(tensor, 0.5)?;
         ids.push(id);
     }

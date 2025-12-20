@@ -4,7 +4,7 @@
 //! with full broadcasting support using the Candle backend.
 
 use crate::tensor::Tensor;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// Trait for arithmetic operations on tensors.
 pub trait ArithmeticOps {

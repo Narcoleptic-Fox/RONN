@@ -12,7 +12,7 @@ use ronn_core::{
     OperatorSpec, PerformanceProfile, ProviderCapability, ProviderConfig, ProviderId,
     ResourceRequirements, SubGraph, Tensor, TensorAllocator,
 };
-use ronn_providers::{create_cpu_provider, ProviderRegistry};
+use ronn_providers::{ProviderRegistry, create_cpu_provider};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -53,10 +53,12 @@ fn test_duplicate_provider_registration() -> Result<()> {
     // Second registration of same provider type should fail
     let result = registry.register_provider(provider2);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("already registered"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("already registered")
+    );
 
     Ok(())
 }

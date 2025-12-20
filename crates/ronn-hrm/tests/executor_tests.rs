@@ -8,8 +8,8 @@
 //! - Statistics tracking
 //! - Performance characteristics
 
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use ronn_hrm::executor::{System1Executor, System2Executor};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -152,12 +152,7 @@ fn test_system1_large_input() -> Result<()> {
     let mut executor = System1Executor::new(false); // Disable caching for large input
 
     let data = vec![1.0f32; 100000];
-    let input = Tensor::from_data(
-        data,
-        vec![1, 100000],
-        DataType::F32,
-        TensorLayout::RowMajor,
-    )?;
+    let input = Tensor::from_data(data, vec![1, 100000], DataType::F32, TensorLayout::RowMajor)?;
 
     let output = executor.execute(&input)?;
 
@@ -313,12 +308,7 @@ fn test_system2_large_input() -> Result<()> {
     let mut executor = System2Executor::new(5);
 
     let data = vec![1.0f32; 100000];
-    let input = Tensor::from_data(
-        data,
-        vec![1, 100000],
-        DataType::F32,
-        TensorLayout::RowMajor,
-    )?;
+    let input = Tensor::from_data(data, vec![1, 100000], DataType::F32, TensorLayout::RowMajor)?;
 
     let output = executor.execute(&input)?;
 
@@ -419,7 +409,12 @@ fn test_executors_with_single_element() -> Result<()> {
     let mut system1 = System1Executor::new(true);
     let mut system2 = System2Executor::new(3);
 
-    let input = Tensor::from_data(vec![42.0f32], vec![1], DataType::F32, TensorLayout::RowMajor)?;
+    let input = Tensor::from_data(
+        vec![42.0f32],
+        vec![1],
+        DataType::F32,
+        TensorLayout::RowMajor,
+    )?;
 
     let output1 = system1.execute(&input)?;
     let output2 = system2.execute(&input)?;

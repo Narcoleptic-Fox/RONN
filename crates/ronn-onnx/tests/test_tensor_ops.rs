@@ -1,9 +1,9 @@
 //! Unit tests for tensor manipulation operators
 //! Tests: Reshape, Transpose, Concat, Split, Gather, Slice
 
+use ronn_core::NodeAttribute;
 use ronn_core::tensor::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_core::NodeAttribute;
 use ronn_onnx::{ConcatOp, GatherOp, OnnxOperator, ReshapeOp, SliceOp, SplitOp, TransposeOp};
 use std::collections::HashMap;
 

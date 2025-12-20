@@ -7,8 +7,8 @@
 //! - Variance calculation accuracy
 //! - Performance characteristics
 
-use ronn_core::types::{DataType, TensorLayout};
 use ronn_core::Tensor;
+use ronn_core::types::{DataType, TensorLayout};
 use ronn_hrm::complexity::{ComplexityAssessor, ComplexityLevel, ComplexityMetrics};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -238,7 +238,9 @@ fn test_alternating_values() -> Result<()> {
     let assessor = ComplexityAssessor::new();
 
     // Alternating between two values
-    let data: Vec<f32> = (0..1000).map(|x| if x % 2 == 0 { 1.0 } else { 10.0 }).collect();
+    let data: Vec<f32> = (0..1000)
+        .map(|x| if x % 2 == 0 { 1.0 } else { 10.0 })
+        .collect();
     let tensor = Tensor::from_data(data, vec![1, 1000], DataType::F32, TensorLayout::RowMajor)?;
 
     let metrics = assessor.assess(&tensor)?;
@@ -300,8 +302,7 @@ fn test_variance_single_element() {
     let assessor = ComplexityAssessor::new();
 
     let data = vec![42.0f32];
-    let tensor =
-        Tensor::from_data(data, vec![1], DataType::F32, TensorLayout::RowMajor).unwrap();
+    let tensor = Tensor::from_data(data, vec![1], DataType::F32, TensorLayout::RowMajor).unwrap();
 
     let variance = assessor.calculate_variance(&tensor).unwrap();
     // Single element has zero variance
@@ -356,7 +357,12 @@ fn test_assessment_performance() -> Result<()> {
 
     // Large tensor for performance testing
     let data: Vec<f32> = (0..100_000).map(|x| x as f32).collect();
-    let tensor = Tensor::from_data(data, vec![1, 100_000], DataType::F32, TensorLayout::RowMajor)?;
+    let tensor = Tensor::from_data(
+        data,
+        vec![1, 100_000],
+        DataType::F32,
+        TensorLayout::RowMajor,
+    )?;
 
     let start = Instant::now();
     let _metrics = assessor.assess(&tensor)?;

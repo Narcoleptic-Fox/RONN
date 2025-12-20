@@ -4,10 +4,10 @@
 //! providing efficient allocation and deallocation with proper alignment
 //! for WASM SIMD operations and JavaScript TypedArray integration.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{DataType, MemoryInfo, MemoryType, TensorAllocator, TensorBuffer};
 
 /// Memory allocator optimized for WebAssembly linear memory.
@@ -116,7 +116,7 @@ impl WasmMemoryAllocator {
     /// Allocate WASM-compatible memory.
     #[cfg(target_arch = "wasm32")]
     fn allocate_wasm_memory(&self, size: usize, alignment: usize) -> Result<*mut u8> {
-        use std::alloc::{alloc, Layout};
+        use std::alloc::{Layout, alloc};
 
         let layout = Layout::from_size_align(size, alignment)
             .map_err(|e| anyhow!("Invalid memory layout: {}", e))?;
@@ -132,7 +132,7 @@ impl WasmMemoryAllocator {
     /// Allocate memory (fallback for non-WASM targets).
     #[cfg(not(target_arch = "wasm32"))]
     fn allocate_wasm_memory(&self, size: usize, alignment: usize) -> Result<*mut u8> {
-        use std::alloc::{alloc, Layout};
+        use std::alloc::{Layout, alloc};
 
         let layout = Layout::from_size_align(size, alignment)
             .map_err(|e| anyhow!("Invalid memory layout: {}", e))?;
@@ -148,7 +148,7 @@ impl WasmMemoryAllocator {
     /// Deallocate WASM memory.
     #[cfg(target_arch = "wasm32")]
     fn deallocate_wasm_memory(&self, ptr: *mut u8, size: usize, alignment: usize) -> Result<()> {
-        use std::alloc::{dealloc, Layout};
+        use std::alloc::{Layout, dealloc};
 
         let layout = Layout::from_size_align(size, alignment)
             .map_err(|e| anyhow!("Invalid memory layout for deallocation: {}", e))?;
@@ -163,7 +163,7 @@ impl WasmMemoryAllocator {
     /// Deallocate memory (fallback for non-WASM targets).
     #[cfg(not(target_arch = "wasm32"))]
     fn deallocate_wasm_memory(&self, ptr: *mut u8, size: usize, alignment: usize) -> Result<()> {
-        use std::alloc::{dealloc, Layout};
+        use std::alloc::{Layout, dealloc};
 
         let layout = Layout::from_size_align(size, alignment)
             .map_err(|e| anyhow!("Invalid memory layout for deallocation: {}", e))?;

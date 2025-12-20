@@ -2,8 +2,8 @@
 //! Tests: Malformed inputs, boundary conditions, invalid protobuf data
 
 use prost::Message;
-use ronn_onnx::onnx_proto::*;
 use ronn_onnx::ModelLoader;
+use ronn_onnx::onnx_proto::*;
 
 // Helper functions to create common protobuf structures with less boilerplate
 fn dim_value(val: i64) -> tensor_shape_proto::Dimension {

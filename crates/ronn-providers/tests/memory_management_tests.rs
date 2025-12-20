@@ -10,8 +10,8 @@
 use anyhow::Result;
 use ronn_core::{DataType, MemoryType, TensorAllocator};
 use ronn_providers::{
-    calculate_tensor_size, get_alignment_requirement, get_simd_alignment, AlignedMemoryAllocator,
-    PoolConfig, PooledMemoryAllocator, SystemMemoryAllocator,
+    AlignedMemoryAllocator, PoolConfig, PooledMemoryAllocator, SystemMemoryAllocator,
+    calculate_tensor_size, get_alignment_requirement, get_simd_alignment,
 };
 
 // ============================================================================

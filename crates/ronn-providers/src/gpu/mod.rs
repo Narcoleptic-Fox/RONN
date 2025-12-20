@@ -14,7 +14,7 @@ pub use cuda_kernels::{
     CompiledCudaKernel, CudaCompileOptions, CudaKernelManager, KernelLaunchConfig,
 };
 pub use memory_manager::{MultiGpuMemoryConfig, MultiGpuMemoryManager, SyncStrategy};
-pub use provider::{create_gpu_provider, create_gpu_provider_with_config, GpuExecutionProvider};
+pub use provider::{GpuExecutionProvider, create_gpu_provider, create_gpu_provider_with_config};
 pub use topology::{
     BandwidthOptimizedPlacement, GpuTopology, GpuTopologyManager, LocalityAwarePlacement,
     PlacementPlan, PlacementStrategy, PowerEfficientPlacement, TopologyConfig, Workload,

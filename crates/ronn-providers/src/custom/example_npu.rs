@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{CompiledKernel, DataType, KernelStats, MemoryUsage, SubGraph, Tensor};
 
 use super::traits::{

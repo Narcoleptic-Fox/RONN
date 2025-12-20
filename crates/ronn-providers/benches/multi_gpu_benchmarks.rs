@@ -7,12 +7,12 @@
 //! - Load balancing strategies
 //! - Synchronization overhead measurements
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use ronn_core::{DataType, GraphNode, SubGraph, Tensor, TensorLayout};
 use ronn_providers::{
-    create_gpu_provider, BandwidthOptimizedPlacement, CudaKernelManager, GpuExecutionProvider,
-    GpuTopologyManager, LocalityAwarePlacement, MultiGpuMemoryConfig, MultiGpuMemoryManager,
-    PowerEfficientPlacement, SyncStrategy, TopologyConfig, Workload, WorkloadType,
+    BandwidthOptimizedPlacement, CudaKernelManager, GpuExecutionProvider, GpuTopologyManager,
+    LocalityAwarePlacement, MultiGpuMemoryConfig, MultiGpuMemoryManager, PowerEfficientPlacement,
+    SyncStrategy, TopologyConfig, Workload, WorkloadType, create_gpu_provider,
 };
 use std::collections::HashMap;
 use std::sync::Arc;

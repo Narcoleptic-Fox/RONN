@@ -6,7 +6,7 @@
 //! Run with: cargo bench --bench comparative --features comparative
 
 #[cfg(feature = "comparative")]
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "comparative")]
 use ronn_api::{Environment, InferenceSession, SessionConfig};
@@ -50,8 +50,8 @@ fn bench_inference_latency_comparison(c: &mut Criterion) {
     // ONNX Runtime inference
     group.bench_function("onnx_runtime_inference", |b| {
         use onnxruntime::{
-            environment::Environment as OrtEnv, session::Session as OrtSession,
-            tensor::OrtOwnedTensor, GraphOptimizationLevel,
+            GraphOptimizationLevel, environment::Environment as OrtEnv,
+            session::Session as OrtSession, tensor::OrtOwnedTensor,
         };
 
         let ort_env = OrtEnv::builder()

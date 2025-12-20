@@ -5,10 +5,10 @@
 
 use tracing::Level;
 use tracing_subscriber::{
+    EnvFilter,
     fmt::{self, format::FmtSpan},
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    EnvFilter,
 };
 
 /// Logging configuration for RONN runtime.

@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 

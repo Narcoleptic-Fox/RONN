@@ -62,24 +62,23 @@ pub mod wasm;
 
 // Re-export commonly used types and functions
 pub use allocator::{
-    calculate_tensor_size, get_alignment_requirement, get_simd_alignment, AlignedMemoryAllocator,
-    PoolConfig, PooledMemoryAllocator, SystemMemoryAllocator,
+    AlignedMemoryAllocator, PoolConfig, PooledMemoryAllocator, SystemMemoryAllocator,
+    calculate_tensor_size, get_alignment_requirement, get_simd_alignment,
 };
 pub use compiler::{
     CompilationResult, CompilationStats, FusionConfig, FusionType, KernelCompiler, MemoryConfig,
     MemoryPlan, TensorInfo,
 };
 pub use cpu::{
-    create_cpu_provider, create_cpu_provider_with_config, create_numa_cpu_provider,
-    detect_simd_capabilities, CpuExecutionProvider, CpuKernel, CpuMemoryAllocator,
-    SimdCapabilities,
+    CpuExecutionProvider, CpuKernel, CpuMemoryAllocator, SimdCapabilities, create_cpu_provider,
+    create_cpu_provider_with_config, create_numa_cpu_provider, detect_simd_capabilities,
 };
 pub use gpu::{
-    create_gpu_provider, create_gpu_provider_with_config, BandwidthOptimizedPlacement,
-    CudaCompileOptions, CudaKernelManager, GpuExecutionProvider, GpuMemoryAllocator, GpuTopology,
-    GpuTopologyManager, LocalityAwarePlacement, MultiGpuMemoryConfig, MultiGpuMemoryManager,
-    PlacementPlan, PlacementStrategy, PowerEfficientPlacement, SyncStrategy, TopologyConfig,
-    Workload, WorkloadType,
+    BandwidthOptimizedPlacement, CudaCompileOptions, CudaKernelManager, GpuExecutionProvider,
+    GpuMemoryAllocator, GpuTopology, GpuTopologyManager, LocalityAwarePlacement,
+    MultiGpuMemoryConfig, MultiGpuMemoryManager, PlacementPlan, PlacementStrategy,
+    PowerEfficientPlacement, SyncStrategy, TopologyConfig, Workload, WorkloadType,
+    create_gpu_provider, create_gpu_provider_with_config,
 };
 pub use registry::{ProviderRegistry, RegistryStatistics};
 
@@ -89,16 +88,16 @@ pub use ronn_core::{ExecutionProvider, ProviderType};
 // Specialized provider re-exports
 #[cfg(feature = "bitnet")]
 pub use bitnet::{
-    create_bitnet_provider, BinaryTensor, BitNetExecutionProvider, BitNetKernel, BitNetOperation,
-    BitNetProviderConfig, BitNetQuantizer, QuantizationMethod, TernaryTensor,
+    BinaryTensor, BitNetExecutionProvider, BitNetKernel, BitNetOperation, BitNetProviderConfig,
+    BitNetQuantizer, QuantizationMethod, TernaryTensor, create_bitnet_provider,
 };
 #[cfg(feature = "custom-hardware")]
 pub use custom::{
-    create_npu_provider, create_tpu_provider, CustomHardwareProvider, CustomProviderRegistry,
-    HardwareCapability, NpuConfig, NpuProvider, TpuConfig, TpuProvider,
+    CustomHardwareProvider, CustomProviderRegistry, HardwareCapability, NpuConfig, NpuProvider,
+    TpuConfig, TpuProvider, create_npu_provider, create_tpu_provider,
 };
 #[cfg(feature = "wasm")]
-pub use wasm::{create_wasm_provider, WasmBridge, WasmExecutionProvider, WasmProviderConfig};
+pub use wasm::{WasmBridge, WasmExecutionProvider, WasmProviderConfig, create_wasm_provider};
 
 /// Result type alias for provider operations.
 pub type Result<T> = anyhow::Result<T>;

@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use ronn_core::{DataType, GraphEdge, GraphNode, NodeId, SubGraph, TensorLayout};
 use tracing::{debug, info};
 
@@ -221,7 +221,10 @@ impl KernelCompiler {
 
         info!(
             "Compilation complete: {} -> {} ops, {:.1}% memory reduction, {:.1}% performance improvement",
-            stats.original_ops, stats.fused_ops, stats.memory_reduction * 100.0, stats.performance_improvement * 100.0
+            stats.original_ops,
+            stats.fused_ops,
+            stats.memory_reduction * 100.0,
+            stats.performance_improvement * 100.0
         );
 
         Ok(CompilationResult {
