@@ -24,10 +24,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-#![deny(missing_docs)]
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
-#![warn(clippy::nursery)]
+// Lint configuration is in workspace Cargo.toml
 
 /// Error types for core operations
 pub mod error;

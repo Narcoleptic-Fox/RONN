@@ -1,3 +1,8 @@
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(dead_code)]
+#![allow(clippy::useless_vec)]
+#![allow(clippy::identity_op)]
 /// Integration tests library for real ONNX models.
 ///
 /// This library contains end-to-end integration tests using production-quality

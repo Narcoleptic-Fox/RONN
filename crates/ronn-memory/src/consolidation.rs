@@ -122,8 +122,8 @@ pub struct ConsolidationStats {
 mod tests {
     use super::*;
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-    use super::*;
     use crate::current_timestamp;
+    use crate::MemoryId;
     use ronn_core::tensor::Tensor;
     use ronn_core::types::{DataType, TensorLayout};
 

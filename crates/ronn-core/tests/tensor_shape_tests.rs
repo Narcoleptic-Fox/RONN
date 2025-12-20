@@ -104,7 +104,7 @@ fn test_squeeze_all_ones() -> Result<()> {
         TensorLayout::RowMajor,
     )?;
 
-    let squeezed = a.squeeze()?;
+    let squeezed = a.squeeze(None)?;
     assert_eq!(squeezed.shape(), vec![2, 2]);
     Ok(())
 }
@@ -146,10 +146,10 @@ fn test_unsqueeze() -> Result<()> {
         TensorLayout::RowMajor,
     )?;
 
-    let unsqueezed = a.unsqueeze(0)?;
+    let unsqueezed = a.unsqueeze(&[0])?;
     assert_eq!(unsqueezed.shape(), vec![1, 2, 2]);
 
-    let unsqueezed2 = a.unsqueeze(2)?;
+    let unsqueezed2 = a.unsqueeze(&[2])?;
     assert_eq!(unsqueezed2.shape(), vec![2, 2, 1]);
     Ok(())
 }
@@ -163,7 +163,7 @@ fn test_unsqueeze_multiple() -> Result<()> {
         TensorLayout::RowMajor,
     )?;
 
-    let result = a.unsqueeze(0)?.unsqueeze(2)?;
+    let result = a.unsqueeze(&[0])?.unsqueeze(&[2])?;
     assert_eq!(result.shape(), vec![1, 2, 1]);
     Ok(())
 }
@@ -443,10 +443,10 @@ fn test_squeeze_unsqueeze_roundtrip() -> Result<()> {
         TensorLayout::RowMajor,
     )?;
 
-    let with_extra_dims = original.unsqueeze(0)?.unsqueeze(3)?;
+    let with_extra_dims = original.unsqueeze(&[0])?.unsqueeze(&[3])?;
     assert_eq!(with_extra_dims.shape(), vec![1, 2, 2, 1]);
 
-    let back = with_extra_dims.squeeze()?;
+    let back = with_extra_dims.squeeze(None)?;
     assert_eq!(back.shape(), vec![2, 2]);
     assert_tensor_approx_eq(&back, &original, 1e-6)?;
     Ok(())
@@ -473,7 +473,7 @@ fn test_complex_shape_transformation() -> Result<()> {
     assert_eq!(step1.shape(), vec![6, 4]);
 
     // Add dimension [1, 6, 4]
-    let step2 = step1.unsqueeze(0)?;
+    let step2 = step1.unsqueeze(&[0])?;
     assert_eq!(step2.shape(), vec![1, 6, 4]);
 
     // Permute to [6, 1, 4]
@@ -481,7 +481,7 @@ fn test_complex_shape_transformation() -> Result<()> {
     assert_eq!(step3.shape(), vec![6, 1, 4]);
 
     // Squeeze to [6, 4]
-    let step4 = step3.squeeze()?;
+    let step4 = step3.squeeze(None)?;
     assert_eq!(step4.shape(), vec![6, 4]);
 
     Ok(())

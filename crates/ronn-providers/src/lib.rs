@@ -40,11 +40,9 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-#![deny(missing_docs)]
-#![warn(unsafe_code)]
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
-#![warn(clippy::nursery)]
+// Lint configuration is in workspace Cargo.toml
+// Providers use unsafe for SIMD and GPU operations
+#![allow(unsafe_code)]
 
 pub mod allocator;
 pub mod compiler;

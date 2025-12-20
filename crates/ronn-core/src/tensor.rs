@@ -432,7 +432,7 @@ impl Tensor {
 
         for i in 0..num_chunks {
             let start = i * chunk_size;
-            let end = start + chunk_size;
+            let _end = start + chunk_size;
             let chunk = self.candle_tensor.narrow(dim, start, chunk_size)?;
             chunks.push(Self {
                 candle_tensor: chunk,
@@ -490,7 +490,7 @@ impl Tensor {
         use candle_nn::LayerNorm;
 
         let shape = self.shape();
-        let normalized_shape = if axis == -1 {
+        let _normalized_shape = if axis == -1 {
             vec![shape[shape.len() - 1]]
         } else {
             let axis_usize = if axis < 0 {

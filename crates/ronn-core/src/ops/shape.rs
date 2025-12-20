@@ -460,13 +460,13 @@ mod tests {
             TensorLayout::RowMajor,
         )?;
 
-        let squeezed = a.squeeze()?;
+        let squeezed = a.squeeze(None)?;
         assert_eq!(squeezed.shape(), vec![2, 2]);
 
         let squeeze_dim = a.squeeze_dim(0)?;
         assert_eq!(squeeze_dim.shape(), vec![2, 2, 1]);
 
-        let unsqueezed = squeezed.unsqueeze(0)?;
+        let unsqueezed = squeezed.unsqueeze(&[0])?;
         assert_eq!(unsqueezed.shape(), vec![1, 2, 2]);
 
         Ok(())
@@ -608,7 +608,7 @@ mod tests {
         assert!(a.squeeze_dim(0).is_err());
 
         // Out of bounds dimension for unsqueeze
-        assert!(a.unsqueeze(5).is_err());
+        assert!(a.unsqueeze(&[5]).is_err());
 
         // Invalid permutation
         assert!(a.permute(&[0, 0]).is_err());

@@ -269,8 +269,8 @@ proptest! {
         let data = tensor_data_strategy(size).new_tree(&mut TestRunner::default()).unwrap().current();
 
         let original = create_test_tensor(shape, data).unwrap();
-        let with_dim = original.unsqueeze(0).unwrap();
-        let back = with_dim.squeeze().unwrap();
+        let with_dim = original.unsqueeze(&[0]).unwrap();
+        let back = with_dim.squeeze(None).unwrap();
 
         let original_data = original.to_vec().unwrap();
         let back_data = back.to_vec().unwrap();

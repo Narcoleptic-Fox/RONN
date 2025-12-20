@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(non_local_definitions)]
 //! Python bindings for RONN
 //!
 //! Provides a Pythonic interface to RONN's high-performance ONNX inference runtime.

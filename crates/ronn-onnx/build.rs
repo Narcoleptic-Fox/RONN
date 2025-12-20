@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use protox (pure Rust protobuf compiler) instead of protoc
     let file_descriptor_set = protox::compile(["proto/onnx.proto"], ["proto/"])?;

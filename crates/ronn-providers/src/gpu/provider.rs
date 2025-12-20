@@ -915,10 +915,8 @@ impl GpuExecutionProvider {
 
     /// Clear all custom kernel caches to free memory.
     pub fn clear_kernel_caches(&self) {
-        for manager in &self.cuda_kernel_managers {
-            if let Some(kernel_manager) = manager {
-                kernel_manager.clear_cache();
-            }
+        for kernel_manager in self.cuda_kernel_managers.iter().flatten() {
+            kernel_manager.clear_cache();
         }
         info!("Cleared all CUDA kernel caches");
     }

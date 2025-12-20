@@ -1,7 +1,8 @@
 [package]
 name = "ronn-python"
 version.workspace = true
-edition.workspace = true
+# Use Rust 2021 edition for PyO3 0.20 compatibility (PyO3 0.27+ required for 2024)
+edition = "2021"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true

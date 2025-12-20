@@ -44,7 +44,7 @@ fn bench_matrix_operations(c: &mut Criterion) {
         });
 
         group.bench_with_input(BenchmarkId::new("transpose", size), size, |bencher, _| {
-            bencher.iter(|| black_box(a.transpose().unwrap()));
+            bencher.iter(|| black_box(a.transpose(&[1, 0]).unwrap()));
         });
     }
 
