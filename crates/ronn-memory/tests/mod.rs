@@ -17,7 +17,7 @@ mod working_memory_tests;
 
 use ronn_core::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_memory::MultiTierMemory;
+use ronn_memory::{ConsolidationResult, Episode, MultiTierMemory};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -64,7 +64,7 @@ fn test_store_and_retrieve_high_importance() -> Result<()> {
     let tensor = Tensor::from_data(data, vec![1, 4], DataType::F32, TensorLayout::RowMajor)?;
 
     // Store with high importance (should go to episodic too)
-    let _id = memory.store(tensor, 0.9)?;
+    let id = memory.store(tensor, 0.9)?;
 
     let stats = memory.stats();
     assert_eq!(stats.working_items, 1);
@@ -189,7 +189,8 @@ async fn test_episodic_to_semantic_consolidation() -> Result<()> {
         memory.store(tensor, 0.9)?;
     }
 
-    let _stats_before = memory.stats();
+    let stats_before = memory.stats();
+    let _episodic_before = stats_before.episodic_episodes;
 
     // Consolidate (should extract patterns to semantic)
     memory.consolidate().await?;
@@ -218,8 +219,8 @@ fn test_store_performance() -> Result<()> {
     memory.store(tensor, 0.5)?;
     let elapsed = start.elapsed();
 
-    // Store should be fast (<10ms)
-    assert!(elapsed.as_millis() < 10, "Store too slow: {:?}", elapsed);
+    // Store should be fast (<1ms)
+    assert!(elapsed.as_millis() < 1, "Store too slow: {:?}", elapsed);
 
     Ok(())
 }
@@ -238,9 +239,9 @@ fn test_retrieve_performance() -> Result<()> {
     let _ = memory.retrieve(id)?;
     let elapsed = start.elapsed();
 
-    // Retrieve should be fast (<1ms)
+    // Retrieve should be very fast (<100µs)
     assert!(
-        elapsed.as_millis() < 1,
+        elapsed.as_micros() < 100,
         "Retrieve too slow: {:?}",
         elapsed
     );
@@ -265,7 +266,7 @@ fn test_many_stores_performance() -> Result<()> {
     println!("1000 stores took: {:?}", elapsed);
     // Should handle many stores efficiently
     assert!(
-        elapsed.as_millis() < 500,
+        elapsed.as_millis() < 100,
         "Many stores too slow: {:?}",
         elapsed
     );
@@ -319,7 +320,8 @@ fn test_concurrent_stores() -> Result<()> {
 fn test_retrieve_nonexistent_id() -> Result<()> {
     let memory = MultiTierMemory::new();
 
-    let result = memory.retrieve(999999)?;
+    // Use a large ID that won't exist
+    let result = memory.retrieve(99999999)?;
 
     // Should return None for non-existent ID
     assert!(result.is_none());

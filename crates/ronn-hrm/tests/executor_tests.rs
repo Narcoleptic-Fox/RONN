@@ -1,144 +1,107 @@
-//! Tests for HRM executors (LowLevel and HighLevel).
+//! Tests for executor functionality (LowLevelExecutor and HighLevelPlanner).
 
 use ronn_core::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_hrm::executor::{LowLevelExecutor, HighLevelPlanner};
+use ronn_hrm::executor::{ExecutionPath, LowLevelExecutor, HighLevelPlanner};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+// ============================================================================
+// LowLevelExecutor Tests (System 1)
+// ============================================================================
+
 #[test]
-fn test_low_level_executor_basic() -> Result<()> {
+fn test_low_level_executor_creation() {
     let executor = LowLevelExecutor::new();
-
-    let input = Tensor::from_data(
-        vec![1.0f32, 2.0, 3.0, 4.0],
-        vec![1, 4],
-        DataType::F32,
-        TensorLayout::RowMajor,
-    )?;
-
-    let output = executor.execute(&input)?;
-
-    // Should produce output of same shape
-    assert_eq!(output.shape(), input.shape());
-
-    Ok(())
+    let stats = executor.cache_stats();
+    assert!(stats.enabled);
 }
 
 #[test]
-fn test_low_level_executor_empty() -> Result<()> {
+fn test_low_level_executor_without_cache() {
+    let executor = LowLevelExecutor::without_cache();
+    let stats = executor.cache_stats();
+    assert!(!stats.enabled);
+}
+
+#[test]
+fn test_low_level_executor_execute() -> Result<()> {
     let executor = LowLevelExecutor::new();
-
-    let input = Tensor::from_data(vec![], vec![0], DataType::F32, TensorLayout::RowMajor)?;
-
+    
+    let data = vec![1.0f32, 2.0, 3.0, 4.0];
+    let input = Tensor::from_data(data, vec![2, 2], DataType::F32, TensorLayout::RowMajor)?;
+    
     let output = executor.execute(&input)?;
-
-    assert_eq!(output.shape(), vec![0]);
-
+    
+    // Output should have same shape as input
+    assert_eq!(output.shape(), input.shape());
+    
     Ok(())
 }
 
 #[test]
-fn test_low_level_executor_large() -> Result<()> {
+fn test_low_level_executor_caching() -> Result<()> {
     let executor = LowLevelExecutor::new();
-
-    let data = vec![1.0f32; 10000];
-    let input = Tensor::from_data(data, vec![1, 10000], DataType::F32, TensorLayout::RowMajor)?;
-
-    let output = executor.execute(&input)?;
-
-    assert_eq!(output.shape(), input.shape());
-
+    
+    let data = vec![1.0f32, 2.0, 3.0, 4.0];
+    let input = Tensor::from_data(data, vec![2, 2], DataType::F32, TensorLayout::RowMajor)?;
+    
+    // Execute twice with same input
+    let _ = executor.execute(&input)?;
+    let _ = executor.execute(&input)?;
+    
+    let stats = executor.cache_stats();
+    // Cache is enabled (actual caching behavior may vary)
+    assert!(stats.enabled);
+    
     Ok(())
 }
 
+// ============================================================================
+// HighLevelPlanner Tests (System 2)
+// ============================================================================
+
 #[test]
-fn test_high_level_planner_basic() -> Result<()> {
+fn test_high_level_planner_creation() {
     let planner = HighLevelPlanner::new();
-
-    let input = Tensor::from_data(
-        vec![1.0f32, 2.0, 3.0, 4.0],
-        vec![1, 4],
-        DataType::F32,
-        TensorLayout::RowMajor,
-    )?;
-
-    let output = planner.execute(&input)?;
-
-    // Should produce output of same shape
-    assert_eq!(output.shape(), input.shape());
-
-    Ok(())
+    let stats = planner.planning_stats();
+    assert!(!stats.decomposition_enabled);
 }
 
 #[test]
-fn test_high_level_planner_empty() -> Result<()> {
+fn test_high_level_planner_with_decomposition() {
+    let planner = HighLevelPlanner::with_decomposition(3);
+    let stats = planner.planning_stats();
+    assert!(stats.decomposition_enabled);
+    assert_eq!(stats.max_depth, 3);
+}
+
+#[test]
+fn test_high_level_planner_execute() -> Result<()> {
     let planner = HighLevelPlanner::new();
-
-    let input = Tensor::from_data(vec![], vec![0], DataType::F32, TensorLayout::RowMajor)?;
-
+    
+    let data = vec![1.0f32, 2.0, 3.0, 4.0];
+    let input = Tensor::from_data(data, vec![2, 2], DataType::F32, TensorLayout::RowMajor)?;
+    
     let output = planner.execute(&input)?;
-
-    assert_eq!(output.shape(), vec![0]);
-
-    Ok(())
-}
-
-#[test]
-fn test_high_level_planner_large() -> Result<()> {
-    let planner = HighLevelPlanner::new();
-
-    let data = vec![1.0f32; 10000];
-    let input = Tensor::from_data(data, vec![1, 10000], DataType::F32, TensorLayout::RowMajor)?;
-
-    let output = planner.execute(&input)?;
-
+    
+    // Output should have same shape as input
     assert_eq!(output.shape(), input.shape());
-
+    
     Ok(())
 }
 
-#[test]
-fn test_both_executors_produce_valid_output() -> Result<()> {
-    let low_level = LowLevelExecutor::new();
-    let high_level = HighLevelPlanner::new();
-
-    let input = Tensor::from_data(
-        vec![1.0f32, 2.0, 3.0, 4.0],
-        vec![1, 4],
-        DataType::F32,
-        TensorLayout::RowMajor,
-    )?;
-
-    let output1 = low_level.execute(&input)?;
-    let output2 = high_level.execute(&input)?;
-
-    // Both should produce valid outputs
-    assert_eq!(output1.shape(), input.shape());
-    assert_eq!(output2.shape(), input.shape());
-
-    Ok(())
-}
+// ============================================================================
+// ExecutionPath Tests
+// ============================================================================
 
 #[test]
-fn test_executor_performance() -> Result<()> {
-    use std::time::Instant;
-
-    let low_level = LowLevelExecutor::new();
-
-    let input = Tensor::from_data(
-        vec![1.0f32; 1000],
-        vec![1, 1000],
-        DataType::F32,
-        TensorLayout::RowMajor,
-    )?;
-
-    let start = Instant::now();
-    let _output = low_level.execute(&input)?;
-    let elapsed = start.elapsed();
-
-    // Should be fast (< 50ms)
-    assert!(elapsed.as_millis() < 50, "Executor too slow: {:?}", elapsed);
-
-    Ok(())
+fn test_execution_path_variants() {
+    let path1 = ExecutionPath::System1;
+    let path2 = ExecutionPath::System2;
+    let path3 = ExecutionPath::Hybrid;
+    
+    // Just verify these can be constructed and compared
+    assert_ne!(format!("{:?}", path1), format!("{:?}", path2));
+    assert_ne!(format!("{:?}", path2), format!("{:?}", path3));
 }

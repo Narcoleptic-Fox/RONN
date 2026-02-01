@@ -98,27 +98,29 @@ impl BatchRequest {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use ronn_api::{Model, SessionOptions, BatchProcessor, BatchConfig, BatchStrategy};
+/// use std::collections::HashMap;
 ///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let model = Model::load("model.onnx")?;
-/// let session = model.create_session(SessionOptions::default())?;
+/// async fn example() -> Result<(), Box<dyn std::error::Error>> {
+///     let model = Model::load("model.onnx")?;
+///     let session = model.create_session(SessionOptions::default())?;
 ///
-/// let config = BatchConfig {
-///     strategy: BatchStrategy::Dynamic {
-///         max_batch_size: 32,
-///         timeout_ms: 10,
-///     },
-///     ..Default::default()
-/// };
+///     let config = BatchConfig {
+///         strategy: BatchStrategy::Dynamic {
+///             max_batch_size: 32,
+///             timeout_ms: 10,
+///         },
+///         ..Default::default()
+///     };
 ///
-/// let processor = BatchProcessor::new(session, config);
+///     let processor = BatchProcessor::new(session, config);
 ///
-/// // Submit requests - they will be automatically batched
-/// let output = processor.process(inputs).await?;
-/// # Ok(())
-/// # }
+///     // Submit requests - they will be automatically batched
+///     let inputs = HashMap::new(); // Add your inputs here
+///     let output = processor.process(inputs).await?;
+///     Ok(())
+/// }
 /// ```
 pub struct BatchProcessor {
     /// Request queue

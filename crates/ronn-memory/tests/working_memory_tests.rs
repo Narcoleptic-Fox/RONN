@@ -10,7 +10,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn test_working_memory_creation() {
     let config = WorkingMemoryConfig {
         capacity: 10,
-        ..Default::default()
+        ttl_ms: 60_000,
+        attention_enabled: true,
     };
     let memory = WorkingMemory::new(config);
     assert_eq!(memory.len(), 0);
@@ -21,7 +22,8 @@ fn test_working_memory_creation() {
 fn test_working_memory_store_and_retrieve() -> Result<()> {
     let config = WorkingMemoryConfig {
         capacity: 10,
-        ..Default::default()
+        ttl_ms: 60_000,
+        attention_enabled: true,
     };
     let mut memory = WorkingMemory::new(config);
 
@@ -39,8 +41,9 @@ fn test_working_memory_store_and_retrieve() -> Result<()> {
 #[test]
 fn test_working_memory_capacity_eviction() -> Result<()> {
     let config = WorkingMemoryConfig {
-        capacity: 5, // Small capacity
-        ..Default::default()
+        capacity: 5,
+        ttl_ms: 60_000,
+        attention_enabled: true,
     };
     let mut memory = WorkingMemory::new(config);
 
@@ -61,7 +64,8 @@ fn test_working_memory_capacity_eviction() -> Result<()> {
 fn test_working_memory_importance_ordering() -> Result<()> {
     let config = WorkingMemoryConfig {
         capacity: 5,
-        ..Default::default()
+        ttl_ms: 60_000,
+        attention_enabled: true,
     };
     let mut memory = WorkingMemory::new(config);
 
@@ -109,7 +113,8 @@ fn test_working_memory_importance_ordering() -> Result<()> {
 fn test_working_memory_recency() -> Result<()> {
     let config = WorkingMemoryConfig {
         capacity: 10,
-        ..Default::default()
+        ttl_ms: 60_000,
+        attention_enabled: true,
     };
     let mut memory = WorkingMemory::new(config);
 

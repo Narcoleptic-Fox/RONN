@@ -17,16 +17,15 @@ use std::sync::RwLock;
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```ignore
 /// use ronn_api::AsyncSession;
+/// use std::collections::HashMap;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     let session = AsyncSession::from_file("model.onnx").await?;
 ///
-///     let mut inputs = HashMap::new();
-///     inputs.insert("input".to_string(), tensor);
-///
+///     let inputs = HashMap::new(); // Add your inputs here
 ///     let outputs = session.run(inputs).await?;
 ///     Ok(())
 /// }

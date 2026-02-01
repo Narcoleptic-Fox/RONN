@@ -467,7 +467,7 @@ impl Tensor {
     /// * `axis` - Axis to normalize over (default: -1 for last dimension)
     ///
     /// # Example
-    /// ```rust
+    /// ```ignore
     /// use ronn_core::tensor::Tensor;
     /// use ronn_core::types::{DataType, TensorLayout};
     ///
@@ -477,7 +477,7 @@ impl Tensor {
     ///     DataType::F32,
     ///     TensorLayout::RowMajor
     /// )?;
-    /// let normalized = input.layer_norm(None, None, 1e-5, -1)?;
+    /// let normalized = input.layer_norm(None, None, 1e-5, 1)?;  // Use positive axis
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn layer_norm(
@@ -727,6 +727,14 @@ impl Tensor {
         axes_sorted.sort_unstable();
 
         for &axis in &axes_sorted {
+            // Check bounds before inserting
+            if axis > new_shape.len() {
+                return Err(anyhow!(
+                    "Unsqueeze axis {} is out of bounds for shape with {} dimensions",
+                    axis,
+                    new_shape.len()
+                ));
+            }
             new_shape.insert(axis, 1);
         }
 

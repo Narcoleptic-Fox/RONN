@@ -6,9 +6,9 @@
 
 A next-generation ML inference runtime written in pure Rust, combining high-performance ONNX compatibility with cognitive computing architectures.
 
-[![CI](https://github.com/dieshen/ronn/workflows/CI/badge.svg)](https://github.com/dieshen/ronn/actions)
-[![Benchmarks](https://github.com/dieshen/ronn/workflows/Benchmarks/badge.svg)](https://github.com/dieshen/ronn/actions)
-[![codecov](https://codecov.io/gh/dieshen/ronn/branch/master/graph/badge.svg)](https://codecov.io/gh/dieshen/ronn)
+[![CI](https://github.com/Narcoleptic-Fox/RONN/workflows/CI/badge.svg)](https://github.com/Narcoleptic-Fox/RONN/actions)
+[![Benchmarks](https://github.com/Narcoleptic-Fox/RONN/workflows/Benchmarks/badge.svg)](https://github.com/Narcoleptic-Fox/RONN/actions)
+[![codecov](https://codecov.io/gh/Narcoleptic-Fox/RONN/branch/master/graph/badge.svg)](https://codecov.io/gh/Narcoleptic-Fox/RONN)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust Version](https://img.shields.io/badge/rust-1.90.0%2B-orange.svg)](https://rustup.rs)
 
