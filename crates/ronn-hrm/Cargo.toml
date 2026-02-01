@@ -1,4 +1,5 @@
 [package]
+description = "Hierarchical Reasoning Module for RONN - brain-inspired dual-process architecture"
 name = "ronn-hrm"
 version.workspace = true
 edition.workspace = true

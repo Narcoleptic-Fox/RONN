@@ -1,4 +1,5 @@
 [package]
+description = "Graph optimization and execution planning for RONN neural network runtime"
 name = "ronn-graph"
 version.workspace = true
 edition.workspace = true
