@@ -454,10 +454,20 @@ fn test_concurrent_learning() -> Result<()> {
     for i in 0..10 {
         let engine_clone = Arc::clone(&engine);
         let handle = thread::spawn(move || {
-            let input =
-                Tensor::from_data(vec![i as f32; 5], vec![1, 5], DataType::F32, TensorLayout::RowMajor).unwrap();
-            let target =
-                Tensor::from_data(vec![0.5f32], vec![1, 1], DataType::F32, TensorLayout::RowMajor).unwrap();
+            let input = Tensor::from_data(
+                vec![i as f32; 5],
+                vec![1, 5],
+                DataType::F32,
+                TensorLayout::RowMajor,
+            )
+            .unwrap();
+            let target = Tensor::from_data(
+                vec![0.5f32],
+                vec![1, 1],
+                DataType::F32,
+                TensorLayout::RowMajor,
+            )
+            .unwrap();
 
             let mut eng = engine_clone.lock().unwrap();
             eng.learn(input, target, 0.5).unwrap();

@@ -6,8 +6,8 @@ mod router_tests;
 
 use ronn_core::Tensor;
 use ronn_core::types::{DataType, TensorLayout};
-use ronn_hrm::{HierarchicalReasoningModule, RoutingStrategy};
 use ronn_hrm::executor::ExecutionPath;
+use ronn_hrm::{HierarchicalReasoningModule, RoutingStrategy};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
