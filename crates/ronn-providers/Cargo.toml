@@ -13,7 +13,7 @@ rust-version.workspace = true
 description = "Execution provider framework for RONN - hardware abstraction layer"
 
 [dependencies]
-ronn-core = { path = "../ronn-core" }
+ronn-core = { version = "0.1.0", path = "../ronn-core" }
 
 # Core tensor operations
 candle-core.workspace = true

@@ -12,10 +12,10 @@ categories.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-ronn-core = { path = "../ronn-core" }
-ronn-providers = { path = "../ronn-providers" }
-ronn-graph = { path = "../ronn-graph" }
-ronn-onnx = { path = "../ronn-onnx" }
+ronn-core = { version = "0.1.0", path = "../ronn-core" }
+ronn-providers = { version = "0.1.0", path = "../ronn-providers" }
+ronn-graph = { version = "0.1.0", path = "../ronn-graph" }
+ronn-onnx = { version = "0.1.0", path = "../ronn-onnx" }
 
 # Async runtime
 tokio = { workspace = true }
