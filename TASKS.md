@@ -1,18 +1,17 @@
 # RONN Development Tasks
 
-## 🎯 v0.1.0 Release Checklist
+## ✅ v0.1.0 Release Ready
 
-### Blockers (Must Fix)
-- [ ] Fix `unsqueeze` bounds checking bug in ronn-core
-- [ ] Update test suites to match current APIs
-- [ ] All tests passing
-
-### Done
+All blockers resolved:
+- [x] Fix `unsqueeze` bounds checking bug
+- [x] Restore test suites (6,600+ lines recovered)
+- [x] All 978 tests passing
 - [x] Create CHANGELOG.md
-- [x] Fix README badge URLs (now point to Narcoleptic-Fox/RONN)
+- [x] Fix README badge URLs
 - [x] Remove misleading status documents
+- [x] Clean up outdated docs
 
-### Nice to Have
+### Nice to Have (Post-Release)
 - [ ] Enable integration tests with real ONNX models
 - [ ] Reduce clippy lint allows
 - [ ] Add deployment documentation
