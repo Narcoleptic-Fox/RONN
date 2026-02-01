@@ -14,27 +14,22 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn test_router_creation_default() {
-    let router = HRMRouter::new(RoutingStrategy::AdaptiveComplexity);
-    // Just verify it can be created
-    drop(router);
+    let _router = HRMRouter::new(RoutingStrategy::AdaptiveComplexity);
 }
 
 #[test]
 fn test_router_creation_always_system1() {
-    let router = HRMRouter::new(RoutingStrategy::AlwaysSystem1);
-    drop(router);
+    let _router = HRMRouter::new(RoutingStrategy::AlwaysSystem1);
 }
 
 #[test]
 fn test_router_creation_always_system2() {
-    let router = HRMRouter::new(RoutingStrategy::AlwaysSystem2);
-    drop(router);
+    let _router = HRMRouter::new(RoutingStrategy::AlwaysSystem2);
 }
 
 #[test]
 fn test_router_creation_adaptive_hybrid() {
-    let router = HRMRouter::new(RoutingStrategy::AdaptiveHybrid);
-    drop(router);
+    let _router = HRMRouter::new(RoutingStrategy::AdaptiveHybrid);
 }
 
 // ============================================================================

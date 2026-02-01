@@ -8,9 +8,8 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
 fn test_complexity_assessor_creation() {
-    let assessor = ComplexityAssessor::new();
-    // Just verify it can be created
-    drop(assessor);
+    let _assessor = ComplexityAssessor::new();
+    // Just verify it can be created without panic
 }
 
 #[test]
