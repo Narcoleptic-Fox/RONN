@@ -9,6 +9,7 @@ members = [
     "crates/ronn-onnx",
     "crates/ronn-api",
     "crates/ronn-python",
+    "crates/ronn-sparsity",
     "examples/*",
     "tests/integration",
 ]
@@ -169,6 +170,7 @@ ronn-graph = { path = "crates/ronn-graph" }
 ronn-providers = { path = "crates/ronn-providers" }
 ronn-onnx = { path = "crates/ronn-onnx" }
 ronn-hrm = { path = "crates/ronn-hrm" }
+ronn-sparsity = { path = "crates/ronn-sparsity" }
 
 # Benchmarking
 criterion = { workspace = true }

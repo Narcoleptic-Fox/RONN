@@ -119,6 +119,42 @@ let provider = router.route(input_tensor)?; // → BitNet or FullPrecision
 | FP16           | 0.5x    | 0.5x   | 99%      |
 | Multi-GPU      | 0.2x    | 2.0x   | 100%     |
 
+### Activation Sparsity (PowerInfer-style)
+
+LLM inference follows a power-law distribution in neuron activation. The `ronn-sparsity` crate exploits this by predicting and skipping inactive neurons:
+
+```
+Input Token -> [Attention] -> [Predictor] -> [Neuron Router]
+                                              |-- Hot neurons -> GPU (always computed)
+                                              |-- Active cold  -> CPU (on-demand)
+                                              |-- Inactive     -> SKIP
+```
+
+- **Profiler**: Records activation patterns during calibration runs
+- **Classifier**: Splits neurons into hot (high frequency) and cold (low frequency) based on profiles
+- **Predictor**: Tiny MLP per FFN layer predicts which cold neurons will fire (< 1ms overhead)
+- **Scheduler**: Routes computation between GPU (hot) and CPU (cold), gathers results
+- **Supported models**: ReLU-native (natural sparsity), SiLU/GELU (threshold-based)
+- **Expected speedup**: 2-5x on ReLU models, 1.5-3x on SiLU/GELU models
+
+```rust
+use ronn_sparsity::*;
+
+// 1. Profile activation patterns
+let mut profiler = ActivationProfiler::new(ProfilerConfig::default());
+profiler.register_layer(0, 4096);
+// ... run calibration samples ...
+let profile = profiler.finalize();
+
+// 2. Classify neurons
+let classification = NeuronClassifier::with_defaults().classify(&profile)?;
+
+// 3. Set up sparse inference
+let mut scheduler = NeuronScheduler::new(SchedulerConfig::default());
+scheduler.load_layer(0, weights, bias, classification, predictor);
+let output = scheduler.run_sparse_ffn(0, &hidden_state)?;
+```
+
 ### Execution Providers
 
 1. **CPU Provider**: SIMD-optimized (AVX2/AVX-512/NEON)
@@ -134,6 +170,7 @@ let provider = router.route(input_tensor)?; // → BitNet or FullPrecision
 ronn-api = "0.1"
 ronn-core = "0.1"
 ronn-providers = "0.1"
+ronn-sparsity = { version = "0.1", features = ["sparsity"] }  # Optional: activation sparsity
 ```
 
 ## Examples
@@ -217,6 +254,7 @@ ronn/
 │   ├── ronn-hrm/          # Hierarchical reasoning module
 │   ├── ronn-memory/       # Multi-tier memory system
 │   ├── ronn-learning/     # Continual learning engine
+│   ├── ronn-sparsity/     # PowerInfer-style activation sparsity
 │   └── ronn-api/          # High-level user API
 ├── examples/
 │   ├── simple-inference/  # Basic usage examples
