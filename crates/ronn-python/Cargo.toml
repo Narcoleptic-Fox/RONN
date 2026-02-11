@@ -15,10 +15,10 @@ name = "ronn"
 crate-type = ["cdylib"]
 
 [dependencies]
-ronn-api = { path = "../ronn-api" }
-ronn-core = { path = "../ronn-core" }
-ronn-graph = { path = "../ronn-graph" }
-ronn-providers = { path = "../ronn-providers" }
+ronn-api = { version = "0.1.0", path = "../ronn-api" }
+ronn-core = { version = "0.1.0", path = "../ronn-core" }
+ronn-graph = { version = "0.1.0", path = "../ronn-graph" }
+ronn-providers = { version = "0.1.0", path = "../ronn-providers" }
 
 # PyO3 for Python bindings
 pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }

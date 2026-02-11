@@ -68,11 +68,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable]
-        include:
-          # Test on nightly for advanced features
-          - os: ubuntu-latest
-            rust: nightly
-            features: --all-features
+        # Note: nightly + --all-features removed because it requires CUDA
 
     steps:
     - name: Checkout code

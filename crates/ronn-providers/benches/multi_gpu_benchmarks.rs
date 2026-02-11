@@ -2,7 +2,7 @@
 //!
 //! Placeholder benchmarks - actual multi-GPU benchmarks require GPU hardware.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 fn multi_gpu_placeholder(c: &mut Criterion) {
     c.bench_function("multi_gpu_placeholder", |b| {

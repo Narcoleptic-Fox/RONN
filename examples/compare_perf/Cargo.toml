@@ -1,0 +1,7 @@
+[package]
+name = "compare_perf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ronn-core = { path = "../../crates/ronn-core" }
