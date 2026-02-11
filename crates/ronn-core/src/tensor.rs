@@ -82,6 +82,30 @@ impl Tensor {
         })
     }
 
+    /// Create an INT64 tensor from raw i64 data.
+    pub fn from_i64(data: Vec<i64>, shape: Vec<usize>, layout: TensorLayout) -> Result<Self> {
+        let device = Device::Cpu;
+        let candle_shape = Shape::from_dims(&shape);
+        let candle_tensor = CandleTensor::from_vec(data, candle_shape, &device)?;
+        Ok(Self {
+            candle_tensor,
+            dtype: DataType::I64,
+            layout,
+        })
+    }
+
+    /// Create an INT32 tensor from raw i32 data.
+    pub fn from_i32(data: Vec<i32>, shape: Vec<usize>, layout: TensorLayout) -> Result<Self> {
+        let device = Device::Cpu;
+        let candle_shape = Shape::from_dims(&shape);
+        let candle_tensor = CandleTensor::from_vec(data, candle_shape, &device)?;
+        Ok(Self {
+            candle_tensor,
+            dtype: DataType::I32,
+            layout,
+        })
+    }
+
     /// Create a tensor filled with zeros.
     ///
     /// # Arguments
@@ -199,9 +223,25 @@ impl Tensor {
         };
 
         match self.dtype {
-            DataType::F32 | DataType::I8 | DataType::I32 | DataType::I64 | DataType::Bool => {
+            DataType::F32 => {
                 let data: Vec<f32> = flattened.to_vec1()?;
                 Ok(data)
+            }
+            DataType::I8 => {
+                let data: Vec<f32> = flattened.to_vec1()?;
+                Ok(data)
+            }
+            DataType::I32 => {
+                let data: Vec<i32> = flattened.to_vec1()?;
+                Ok(data.into_iter().map(|x| x as f32).collect())
+            }
+            DataType::I64 => {
+                let data: Vec<i64> = flattened.to_vec1()?;
+                Ok(data.into_iter().map(|x| x as f32).collect())
+            }
+            DataType::Bool => {
+                let data: Vec<u8> = flattened.to_vec1()?;
+                Ok(data.into_iter().map(|x| x as f32).collect())
             }
             DataType::F16 => {
                 let data: Vec<half::f16> = flattened.to_vec1()?;
@@ -446,8 +486,51 @@ impl Tensor {
 
     /// Gather elements along an axis.
     pub fn gather(&self, indices: &Tensor, dim: usize) -> Result<Tensor> {
-        let _ = (indices, dim);
-        Err(anyhow!("gather not yet fully implemented"))
+        let shape = self.shape();
+        if dim >= shape.len() {
+            return Err(anyhow!(
+                "Dimension {} out of bounds for shape {:?}",
+                dim,
+                shape
+            ));
+        }
+
+        // ONNX indices are typically int64, but we accept common integer types.
+        let flat_indices: Vec<i64> = if let Ok(v) = indices.to_vec1::<i64>() {
+            v
+        } else if let Ok(v) = indices.to_vec1::<i32>() {
+            v.into_iter().map(i64::from).collect()
+        } else if let Ok(v) = indices.to_vec1::<u32>() {
+            v.into_iter().map(i64::from).collect()
+        } else if let Ok(v) = indices.to_vec1::<u8>() {
+            v.into_iter().map(i64::from).collect()
+        } else {
+            return Err(anyhow!(
+                "Gather indices must be an integer tensor, got {:?}",
+                indices.dtype()
+            ));
+        };
+
+        let indices_shape = indices.shape();
+        let idx = CandleTensor::from_vec(
+            flat_indices.clone(),
+            vec![flat_indices.len()],
+            self.candle_tensor.device(),
+        )?;
+
+        let selected = self.candle_tensor.index_select(&idx, dim)?;
+
+        let mut out_shape = Vec::new();
+        out_shape.extend_from_slice(&shape[..dim]);
+        out_shape.extend(indices_shape.iter().copied());
+        out_shape.extend_from_slice(&shape[dim + 1..]);
+
+        let gathered = if out_shape == selected.dims() {
+            selected
+        } else {
+            selected.reshape(out_shape)?
+        };
+        Ok(Tensor::from_candle(gathered, self.dtype, self.layout))
     }
 
     /// Transpose with specific permutation.

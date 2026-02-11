@@ -51,3 +51,4 @@ site/
 # Temporary files
 *.tmp
 *.log
+**/**.local***

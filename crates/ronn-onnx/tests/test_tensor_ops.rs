@@ -369,30 +369,42 @@ fn test_gather_with_indices() {
     let data = vec![1.0, 2.0, 3.0, 4.0];
     let input = Tensor::from_data(data, vec![4], DataType::F32, TensorLayout::RowMajor).unwrap();
 
-    let indices_data = vec![0.0, 2.0, 3.0]; // Will be converted to indices
-    let indices =
-        Tensor::from_data(indices_data, vec![3], DataType::F32, TensorLayout::RowMajor).unwrap();
+    let indices = Tensor::from_i64(vec![0, 2, 3], vec![3], TensorLayout::RowMajor).unwrap();
 
     let inputs = vec![&input, &indices];
     let mut attributes = HashMap::new();
     attributes.insert("axis".to_string(), NodeAttribute::Int(0));
 
-    let result = op.execute(&inputs, &attributes);
-    assert!(result.is_err()); // Not fully implemented yet
+    let results = op.execute(&inputs, &attributes).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].shape(), vec![3]);
+    let output = results[0].to_vec().unwrap();
+    let expected = vec![1.0, 3.0, 4.0];
+    assert!(approx_eq_vec(&output, &expected, EPSILON));
 }
 
 #[test]
 fn test_gather_default_axis() {
     let op = GatherOp;
 
-    let input = Tensor::zeros(vec![3, 4], DataType::F32, TensorLayout::RowMajor).unwrap();
-    let indices = Tensor::zeros(vec![2], DataType::F32, TensorLayout::RowMajor).unwrap();
+    let input = Tensor::from_data(
+        vec![1.0, 10.0, 2.0, 20.0, 3.0, 30.0],
+        vec![3, 2],
+        DataType::F32,
+        TensorLayout::RowMajor,
+    )
+    .unwrap();
+    let indices = Tensor::from_i64(vec![2, 0], vec![2], TensorLayout::RowMajor).unwrap();
 
     let inputs = vec![&input, &indices];
     let attributes = HashMap::new(); // Should use axis=0 by default
 
-    let result = op.execute(&inputs, &attributes);
-    assert!(result.is_err());
+    let results = op.execute(&inputs, &attributes).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].shape(), vec![2, 2]);
+    let output = results[0].to_vec().unwrap();
+    let expected = vec![3.0, 30.0, 1.0, 10.0];
+    assert!(approx_eq_vec(&output, &expected, EPSILON));
 }
 
 // ============ Slice Tests ============

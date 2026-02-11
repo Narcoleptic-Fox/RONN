@@ -267,19 +267,67 @@ impl ModelLoader {
     ) -> Result<ronn_core::tensor::Tensor> {
         use ronn_core::types::TensorLayout;
 
-        // For now, create a zero tensor and note that we need to copy data
-        // Full implementation would parse raw_data based on data_type
-        let tensor =
-            ronn_core::tensor::Tensor::zeros(shape.to_vec(), data_type, TensorLayout::RowMajor)?;
+        let tensor = match data_type {
+            ronn_core::types::DataType::F32 => {
+                if raw_data.len() % 4 != 0 {
+                    return Err(OnnxError::ParseError(format!(
+                        "Invalid raw_data length {} for F32 tensor",
+                        raw_data.len()
+                    )));
+                }
+                let values = raw_data
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect::<Vec<f32>>();
+                ronn_core::tensor::Tensor::from_data(
+                    values,
+                    shape.to_vec(),
+                    data_type,
+                    TensorLayout::RowMajor,
+                )?
+            }
+            ronn_core::types::DataType::I64 => {
+                if raw_data.len() % 8 != 0 {
+                    return Err(OnnxError::ParseError(format!(
+                        "Invalid raw_data length {} for I64 tensor",
+                        raw_data.len()
+                    )));
+                }
+                let values = raw_data
+                    .chunks_exact(8)
+                    .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+                    .collect::<Vec<i64>>();
+                ronn_core::tensor::Tensor::from_i64(values, shape.to_vec(), TensorLayout::RowMajor)?
+            }
+            ronn_core::types::DataType::I32 => {
+                if raw_data.len() % 4 != 0 {
+                    return Err(OnnxError::ParseError(format!(
+                        "Invalid raw_data length {} for I32 tensor",
+                        raw_data.len()
+                    )));
+                }
+                let values = raw_data
+                    .chunks_exact(4)
+                    .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect::<Vec<i32>>();
+                ronn_core::tensor::Tensor::from_i32(values, shape.to_vec(), TensorLayout::RowMajor)?
+            }
+            _ => {
+                // Keep fallback behavior for less common dtypes until each is mapped.
+                ronn_core::tensor::Tensor::zeros(
+                    shape.to_vec(),
+                    data_type,
+                    TensorLayout::RowMajor,
+                )?
+            }
+        };
 
-        // TODO: Parse raw_data bytes according to data_type endianness
         debug!(
-            "Created tensor from raw_data: shape={:?}, type={:?}, bytes={}",
+            "Decoded tensor from raw_data: shape={:?}, type={:?}, bytes={}",
             shape,
             data_type,
             raw_data.len()
         );
-
         Ok(tensor)
     }
 
@@ -311,13 +359,9 @@ impl ModelLoader {
             }
             DataType::I32 => {
                 if !tensor_proto.int32_data.is_empty() {
-                    // Convert i32 to f32 for from_data
-                    let f32_data: Vec<f32> =
-                        tensor_proto.int32_data.iter().map(|&x| x as f32).collect();
-                    ronn_core::tensor::Tensor::from_data(
-                        f32_data,
+                    ronn_core::tensor::Tensor::from_i32(
+                        tensor_proto.int32_data.clone(),
                         shape.to_vec(),
-                        data_type,
                         TensorLayout::RowMajor,
                     )?
                 } else {
@@ -330,13 +374,9 @@ impl ModelLoader {
             }
             DataType::I64 => {
                 if !tensor_proto.int64_data.is_empty() {
-                    // Convert i64 to f32 for from_data
-                    let f32_data: Vec<f32> =
-                        tensor_proto.int64_data.iter().map(|&x| x as f32).collect();
-                    ronn_core::tensor::Tensor::from_data(
-                        f32_data,
+                    ronn_core::tensor::Tensor::from_i64(
+                        tensor_proto.int64_data.clone(),
                         shape.to_vec(),
-                        data_type,
                         TensorLayout::RowMajor,
                     )?
                 } else {

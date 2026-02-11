@@ -147,6 +147,40 @@ fn test_load_model_with_initializers() {
 }
 
 #[test]
+fn test_load_initializer_from_raw_data_f32() {
+    let raw_data = [1.0_f32, 2.5_f32]
+        .into_iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect::<Vec<u8>>();
+
+    let model_proto = ModelProto {
+        ir_version: 7,
+        graph: Some(GraphProto {
+            name: "test_graph".to_string(),
+            node: vec![],
+            input: vec![value_info("input1", 1, vec![2])],
+            output: vec![],
+            initializer: vec![TensorProto {
+                name: "weight".to_string(),
+                dims: vec![2],
+                data_type: 1, // FLOAT
+                raw_data,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    let model_bytes = model_proto.encode_to_vec();
+    let model = ModelLoader::load_from_bytes(&model_bytes).unwrap();
+    let weight = model.initializers.get("weight").unwrap();
+    let values = weight.to_vec().unwrap();
+
+    assert_eq!(values, vec![1.0, 2.5]);
+}
+
+#[test]
 fn test_load_invalid_json() {
     let invalid_json = b"{ invalid json }";
     let result = ModelLoader::load_from_bytes(invalid_json);
