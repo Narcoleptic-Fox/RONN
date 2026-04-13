@@ -1,0 +1,20 @@
+[package]
+name = "nnx-ggml"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Legacy GGML format loading for NNX (optional compatibility)"
+
+[dependencies]
+nnx-core = { path = "../nnx-core" }
+nnx-quant = { path = "../nnx-quant" }
+memmap2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

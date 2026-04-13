@@ -1,0 +1,22 @@
+//! NNX Core — foundational types and traits for the NNX inference engine.
+//!
+//! This crate defines the vocabulary shared across all NNX crates:
+//! tensor representation, data types, device abstraction, and the
+//! [`InferenceEngine`] trait that orchestration layers build upon.
+
+pub mod device;
+pub mod dtype;
+pub mod engine;
+pub mod error;
+pub mod shape;
+pub mod tensor;
+
+pub use device::{Device, DeviceId};
+pub use dtype::DType;
+pub use engine::{
+    GenerationOutput, InferenceEngine, KVCacheAccess, LoadConfig, ModelHandle, ModelInfo,
+    TokenBatch,
+};
+pub use error::{EngineError, Result};
+pub use shape::Shape;
+pub use tensor::{Tensor, TensorView};

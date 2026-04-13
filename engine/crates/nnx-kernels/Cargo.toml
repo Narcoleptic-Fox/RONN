@@ -1,0 +1,26 @@
+[package]
+name = "nnx-kernels"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Optimized compute kernels for NNX (matmul, softmax, SIMD)"
+
+[dependencies]
+nnx-core = { path = "../nnx-core" }
+nnx-quant = { path = "../nnx-quant" }
+half.workspace = true
+rayon.workspace = true
+wide.workspace = true
+cpufeatures.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "matmul"
+harness = false
+
+[lints]
+workspace = true

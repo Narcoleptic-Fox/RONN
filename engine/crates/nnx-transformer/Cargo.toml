@@ -1,0 +1,23 @@
+[package]
+name = "nnx-transformer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Transformer model architecture for NNX"
+
+[dependencies]
+nnx-core = { path = "../nnx-core" }
+nnx-quant = { path = "../nnx-quant" }
+nnx-gguf = { path = "../nnx-gguf" }
+nnx-kernels = { path = "../nnx-kernels" }
+half.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "nnx-quant"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Quantization formats and dequantization kernels for NNX"
+
+[dependencies]
+nnx-core = { path = "../nnx-core" }
+half.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "dequant"
+harness = false
+
+[lints]
+workspace = true

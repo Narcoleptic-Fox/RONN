@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    # RONN orchestration crates
     "crates/ronn-core",
     "crates/ronn-providers",
     "crates/ronn-graph",
@@ -9,6 +10,16 @@ members = [
     "crates/ronn-onnx",
     "crates/ronn-api",
     "crates/ronn-python",
+    # NNX inference engine crates
+    "engine/crates/nnx-core",
+    "engine/crates/nnx-quant",
+    "engine/crates/nnx-gguf",
+    "engine/crates/nnx-safetensors",
+    "engine/crates/nnx-onnx",
+    "engine/crates/nnx-ggml",
+    "engine/crates/nnx-kernels",
+    "engine/crates/nnx-transformer",
+    # Examples and tests
     "examples/*",
     "tests/integration",
 ]
