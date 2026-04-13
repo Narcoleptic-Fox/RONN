@@ -21,11 +21,16 @@
 //!         Semantic Memory (Knowledge Graph, Long-term)
 //! ```
 
+pub mod activation_cache;
 pub mod consolidation;
 pub mod episodic;
 pub mod semantic;
 pub mod working;
 
+pub use activation_cache::{
+    ActivationCache, ActivationCacheConfig, ActivationCacheKey, ActivationCacheStats,
+    CachedActivationPattern,
+};
 pub use consolidation::{ConsolidationConfig, SleepConsolidation};
 pub use episodic::{Episode, EpisodeQuery, EpisodicMemory};
 pub use semantic::{Concept, ConceptGraph, SemanticMemory};

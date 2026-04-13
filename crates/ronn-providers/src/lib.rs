@@ -49,6 +49,7 @@ pub mod compiler;
 pub mod cpu;
 pub mod gpu;
 pub mod registry;
+pub mod sparse;
 
 // Specialized execution providers
 #[cfg(feature = "bitnet")]
@@ -79,6 +80,7 @@ pub use gpu::{
     create_gpu_provider, create_gpu_provider_with_config,
 };
 pub use registry::{ProviderRegistry, RegistryStatistics};
+pub use sparse::{CpuSparseProvider, GpuSparseProvider, SparseExecutionProvider};
 
 // Re-export core types that providers use
 pub use ronn_core::{ExecutionProvider, ProviderType};

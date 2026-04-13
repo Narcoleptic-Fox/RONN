@@ -45,8 +45,8 @@ fn test_optimizer_o3_aggressive_passes() {
     let optimizer = Optimizer::new(OptimizationLevel::O3);
     assert_eq!(
         optimizer.pass_count(),
-        6,
-        "O3 should have 6 passes (O2 + CPU + GPU specific)"
+        7,
+        "O3 should have 7 passes (O2 + CPU + GPU specific + sparsity)"
     );
     assert_eq!(optimizer.level(), OptimizationLevel::O3);
 }

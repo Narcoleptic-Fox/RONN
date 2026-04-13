@@ -5,12 +5,14 @@ mod dead_code;
 mod fusion;
 mod layout;
 mod provider_specific;
+mod sparsity;
 
 pub use constant_folding::ConstantFoldingPass;
 pub use dead_code::DeadCodeEliminationPass;
 pub use fusion::NodeFusionPass;
 pub use layout::LayoutOptimizationPass;
 pub use provider_specific::{CpuOptimizationPass, GpuOptimizationPass};
+pub use sparsity::SparsityOptimizationPass;
 
 use crate::error::Result;
 use crate::optimizer::PassStats;

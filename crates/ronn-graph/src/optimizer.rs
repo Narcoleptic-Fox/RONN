@@ -50,6 +50,7 @@ impl Optimizer {
                 pass_manager.add_pass(Box::new(LayoutOptimizationPass));
                 pass_manager.add_pass(Box::new(CpuOptimizationPass));
                 pass_manager.add_pass(Box::new(GpuOptimizationPass));
+                pass_manager.add_pass(Box::new(SparsityOptimizationPass));
             }
         }
 

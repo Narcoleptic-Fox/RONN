@@ -23,10 +23,12 @@
 pub mod complexity;
 pub mod executor;
 pub mod router;
+pub mod sparsity;
 
 pub use complexity::{ComplexityAssessor, ComplexityLevel, ComplexityMetrics};
 pub use executor::{ExecutionPath, HighLevelPlanner, LowLevelExecutor};
 pub use router::{HRMRouter, RoutingDecision, RoutingStrategy};
+pub use sparsity::{SparsityRouter, SparsityRoutingConfig, SparsityRoutingDecision};
 
 use ronn_core::tensor::Tensor;
 use thiserror::Error;
