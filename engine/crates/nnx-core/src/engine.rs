@@ -149,11 +149,23 @@ pub trait InferenceEngine: Send + Sync {
         end_layer: usize,
     ) -> Result<Tensor>;
 
-    /// Get model metadata.
-    fn model_info(&self, handle: ModelHandle) -> Result<&ModelInfo>;
+    /// Get model metadata (cloned — call once and cache the result).
+    fn model_info(&self, handle: ModelHandle) -> Result<ModelInfo>;
 
-    /// Get a mutable reference to the KV cache for external management.
-    fn kv_cache(&self, handle: ModelHandle) -> Result<&mut dyn KVCacheAccess>;
+    /// Get the current number of cached tokens.
+    fn cache_tokens(&self, handle: ModelHandle) -> Result<usize>;
+
+    /// Get the cache capacity in tokens.
+    fn cache_capacity(&self, handle: ModelHandle) -> Result<usize>;
+
+    /// Get cache memory usage in bytes.
+    fn cache_memory_bytes(&self, handle: ModelHandle) -> Result<usize>;
+
+    /// Clear the KV cache (start new conversation).
+    fn cache_clear(&self, handle: ModelHandle) -> Result<()>;
+
+    /// Truncate the cache to keep only the first `n` tokens.
+    fn cache_truncate(&self, handle: ModelHandle, n: usize) -> Result<()>;
 
     /// Extract intermediate layer features during the next forward pass.
     ///

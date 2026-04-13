@@ -3,6 +3,8 @@
 //! These operate on flat slices. Axis-aware reduction is handled at
 //! a higher level by computing strides and calling these on sub-slices.
 
+use nnx_core::error::EngineError;
+
 /// Sum of all elements.
 pub fn sum_f32(x: &[f32]) -> f32 {
     x.iter().sum()
@@ -88,6 +90,54 @@ pub fn mean_axis_2d(x: &[f32], output: &mut [f32], rows: usize, cols: usize, axi
     for v in output.iter_mut() { *v /= divisor; }
 }
 
+/// Checked version of `sum_axis_2d` that returns Result instead of panicking on bad axis.
+pub fn sum_axis_2d_checked(
+    x: &[f32], output: &mut [f32], rows: usize, cols: usize, axis: usize,
+) -> nnx_core::error::Result<()> {
+    if axis > 1 {
+        return Err(EngineError::Kernel(
+            format!("sum_axis_2d: axis must be 0 or 1, got {}", axis)
+        ));
+    }
+    if x.len() != rows * cols {
+        return Err(EngineError::ShapeMismatch(
+            format!("sum_axis_2d: x.len()={} but rows*cols={}", x.len(), rows * cols)
+        ));
+    }
+    let expected_out = if axis == 0 { cols } else { rows };
+    if output.len() != expected_out {
+        return Err(EngineError::ShapeMismatch(
+            format!("sum_axis_2d: output.len()={} but expected {}", output.len(), expected_out)
+        ));
+    }
+    sum_axis_2d(x, output, rows, cols, axis);
+    Ok(())
+}
+
+/// Checked version of `mean_axis_2d`.
+pub fn mean_axis_2d_checked(
+    x: &[f32], output: &mut [f32], rows: usize, cols: usize, axis: usize,
+) -> nnx_core::error::Result<()> {
+    if axis > 1 {
+        return Err(EngineError::Kernel(
+            format!("mean_axis_2d: axis must be 0 or 1, got {}", axis)
+        ));
+    }
+    if x.len() != rows * cols {
+        return Err(EngineError::ShapeMismatch(
+            format!("mean_axis_2d: x.len()={} but rows*cols={}", x.len(), rows * cols)
+        ));
+    }
+    let expected_out = if axis == 0 { cols } else { rows };
+    if output.len() != expected_out {
+        return Err(EngineError::ShapeMismatch(
+            format!("mean_axis_2d: output.len()={} but expected {}", output.len(), expected_out)
+        ));
+    }
+    mean_axis_2d(x, output, rows, cols, axis);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +164,28 @@ mod tests {
         let mut out_rows = [0.0f32; 2];
         sum_axis_2d(&x, &mut out_rows, 2, 3, 1);
         assert_eq!(out_rows, [6.0, 15.0]); // row sums
+    }
+
+    // Checked wrapper tests
+    #[test]
+    fn test_sum_axis_checked_valid() {
+        let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0f32];
+        let mut out = [0.0f32; 3];
+        assert!(sum_axis_2d_checked(&x, &mut out, 2, 3, 0).is_ok());
+        assert_eq!(out, [5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_sum_axis_checked_bad_axis() {
+        let x = [1.0, 2.0f32];
+        let mut out = [0.0f32; 1];
+        assert!(sum_axis_2d_checked(&x, &mut out, 1, 2, 2).is_err());
+    }
+
+    #[test]
+    fn test_sum_axis_checked_bad_output() {
+        let x = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0f32];
+        let mut out = [0.0f32; 2]; // wrong for axis=0, cols=3
+        assert!(sum_axis_2d_checked(&x, &mut out, 2, 3, 0).is_err());
     }
 }

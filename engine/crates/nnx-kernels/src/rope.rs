@@ -1,4 +1,6 @@
-//! Rotary Position Embedding (RoPE) — position encoding for Llama-family models.
+//! Rotary Position Embedding (RoPE) -- position encoding for Llama-family models.
+
+use nnx_core::error::EngineError;
 
 /// Apply RoPE to a query or key vector in-place.
 ///
@@ -23,6 +25,22 @@ pub fn rope_f32(x: &mut [f32], position: usize, freq_base: f32) {
     }
 }
 
+/// Checked version of `rope_f32` that validates head_dim is even.
+pub fn rope_f32_checked(x: &mut [f32], position: usize, freq_base: f32) -> nnx_core::error::Result<()> {
+    if x.len() % 2 != 0 {
+        return Err(EngineError::ShapeMismatch(
+            format!("rope: head_dim must be even, got {}", x.len())
+        ));
+    }
+    if x.is_empty() {
+        return Err(EngineError::ShapeMismatch(
+            "rope: input must be non-empty".to_string()
+        ));
+    }
+    rope_f32(x, position, freq_base);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -36,5 +54,24 @@ mod tests {
         for i in 0..4 {
             assert!((x[i] - original[i]).abs() < 1e-6);
         }
+    }
+
+    // Checked wrapper tests
+    #[test]
+    fn test_rope_checked_valid() {
+        let mut x = [1.0, 2.0, 3.0, 4.0f32];
+        assert!(rope_f32_checked(&mut x, 0, 10000.0).is_ok());
+    }
+
+    #[test]
+    fn test_rope_checked_odd_dim() {
+        let mut x = [1.0, 2.0, 3.0f32]; // odd dimension
+        assert!(rope_f32_checked(&mut x, 0, 10000.0).is_err());
+    }
+
+    #[test]
+    fn test_rope_checked_empty() {
+        let mut x: [f32; 0] = [];
+        assert!(rope_f32_checked(&mut x, 0, 10000.0).is_err());
     }
 }

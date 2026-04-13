@@ -113,39 +113,19 @@ pub fn generate(
 mod tests {
     use super::*;
     use crate::block::BlockWeights;
-    use crate::config::ModelConfig;
+    use crate::config::*;
     use crate::model::{Model, ModelWeights};
 
     fn tiny_model() -> Model {
-        let config = ModelConfig {
-            architecture: "test".into(),
-            num_layers: 1,
-            hidden_dim: 8,
-            num_heads: 2,
-            num_kv_heads: 2,
-            head_dim: 4,
-            intermediate_dim: 16,
-            vocab_size: 32,
-            max_context_length: 64,
-            rope_freq_base: 10000.0,
-            rms_norm_eps: 1e-5,
-        };
+        let mut config = ModelConfig::test_llama(8, 2, 2, 4, 16, 32);
+        config.num_layers = 1;
 
         let hd = 8;
         let weights = ModelWeights {
             token_embedding: vec![0.1; 32 * hd],
-            layers: vec![BlockWeights {
-                attn_norm: vec![1.0; hd],
-                ffn_norm: vec![1.0; hd],
-                wq: vec![0.01; 8 * hd],
-                wk: vec![0.01; 8 * hd],
-                wv: vec![0.01; 8 * hd],
-                wo: vec![0.01; hd * 8],
-                w_gate: vec![0.01; 16 * hd],
-                w_up: vec![0.01; 16 * hd],
-                w_down: vec![0.01; hd * 16],
-            }],
+            layers: vec![BlockWeights::test_no_bias(hd, 2, 2, 4, 16)],
             final_norm: vec![1.0; hd],
+            final_norm_bias: None,
             lm_head: vec![0.01; 32 * hd],
         };
 

@@ -3,6 +3,8 @@
 //! These operate on flat f32 buffers with shape metadata passed as parameters.
 //! The caller is responsible for computing correct output shapes.
 
+use nnx_core::error::EngineError;
+
 /// Transpose a 2D matrix: [rows, cols] → [cols, rows]
 pub fn transpose_2d_f32(input: &[f32], output: &mut [f32], rows: usize, cols: usize) {
     assert_eq!(input.len(), rows * cols);
@@ -93,6 +95,109 @@ pub fn embedding_f32(
     }
 }
 
+// -- Checked wrappers --
+
+/// Checked version of `transpose_2d_f32`.
+pub fn transpose_2d_f32_checked(
+    input: &[f32], output: &mut [f32], rows: usize, cols: usize,
+) -> nnx_core::error::Result<()> {
+    let expected = rows * cols;
+    if input.len() != expected {
+        return Err(EngineError::ShapeMismatch(
+            format!("transpose_2d: input.len()={} but rows*cols={}", input.len(), expected)
+        ));
+    }
+    if output.len() != expected {
+        return Err(EngineError::ShapeMismatch(
+            format!("transpose_2d: output.len()={} but rows*cols={}", output.len(), expected)
+        ));
+    }
+    transpose_2d_f32(input, output, rows, cols);
+    Ok(())
+}
+
+/// Checked version of `slice_1d_f32`.
+pub fn slice_1d_f32_checked(
+    input: &[f32], output: &mut [f32], start: usize, end: usize,
+) -> nnx_core::error::Result<()> {
+    if end < start {
+        return Err(EngineError::ShapeMismatch(
+            format!("slice_1d: end={} < start={}", end, start)
+        ));
+    }
+    if end > input.len() {
+        return Err(EngineError::ShapeMismatch(
+            format!("slice_1d: end={} > input.len()={}", end, input.len())
+        ));
+    }
+    let len = end - start;
+    if output.len() != len {
+        return Err(EngineError::ShapeMismatch(
+            format!("slice_1d: output.len()={} but slice len={}", output.len(), len)
+        ));
+    }
+    slice_1d_f32(input, output, start, end);
+    Ok(())
+}
+
+/// Checked version of `pad_1d_f32`.
+pub fn pad_1d_f32_checked(
+    input: &[f32], output: &mut [f32], pad_before: usize, pad_after: usize,
+) -> nnx_core::error::Result<()> {
+    let expected = input.len() + pad_before + pad_after;
+    if output.len() != expected {
+        return Err(EngineError::ShapeMismatch(
+            format!("pad_1d: output.len()={} but expected {}", output.len(), expected)
+        ));
+    }
+    pad_1d_f32(input, output, pad_before, pad_after);
+    Ok(())
+}
+
+/// Checked version of `repeat_f32`.
+pub fn repeat_f32_checked(
+    input: &[f32], output: &mut [f32], repeats: usize,
+) -> nnx_core::error::Result<()> {
+    if output.len() != input.len() * repeats {
+        return Err(EngineError::ShapeMismatch(
+            format!("repeat: output.len()={} but input.len()*repeats={}", output.len(), input.len() * repeats)
+        ));
+    }
+    repeat_f32(input, output, repeats);
+    Ok(())
+}
+
+/// Checked version of `embedding_f32`.
+pub fn embedding_f32_checked(
+    weight: &[f32], indices: &[u32], output: &mut [f32], embed_dim: usize,
+) -> nnx_core::error::Result<()> {
+    if embed_dim == 0 {
+        return Err(EngineError::ShapeMismatch(
+            "embedding: embed_dim must be non-zero".to_string()
+        ));
+    }
+    let vocab_size = weight.len() / embed_dim;
+    if weight.len() != vocab_size * embed_dim {
+        return Err(EngineError::ShapeMismatch(
+            format!("embedding: weight.len()={} not divisible by embed_dim={}", weight.len(), embed_dim)
+        ));
+    }
+    if output.len() != indices.len() * embed_dim {
+        return Err(EngineError::ShapeMismatch(
+            format!("embedding: output.len()={} but indices.len()*embed_dim={}", output.len(), indices.len() * embed_dim)
+        ));
+    }
+    for &idx in indices {
+        if (idx as usize) >= vocab_size {
+            return Err(EngineError::ShapeMismatch(
+                format!("embedding: index {} out of range for vocab_size={}", idx, vocab_size)
+            ));
+        }
+    }
+    embedding_f32(weight, indices, output, embed_dim);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +234,51 @@ mod tests {
         let mut output = [0.0f32; 7];
         pad_1d_f32(&input, &mut output, 2, 2);
         assert_eq!(output, [0.0, 0.0, 1.0, 2.0, 3.0, 0.0, 0.0]);
+    }
+
+    // Checked wrapper tests
+    #[test]
+    fn test_transpose_checked_valid() {
+        let input = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0f32];
+        let mut output = [0.0f32; 6];
+        assert!(transpose_2d_f32_checked(&input, &mut output, 2, 3).is_ok());
+    }
+
+    #[test]
+    fn test_transpose_checked_bad_input() {
+        let input = [1.0, 2.0f32]; // wrong for 2x3
+        let mut output = [0.0f32; 6];
+        assert!(transpose_2d_f32_checked(&input, &mut output, 2, 3).is_err());
+    }
+
+    #[test]
+    fn test_slice_checked_valid() {
+        let input = [1.0, 2.0, 3.0, 4.0f32];
+        let mut output = [0.0f32; 2];
+        assert!(slice_1d_f32_checked(&input, &mut output, 1, 3).is_ok());
+        assert_eq!(output, [2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_slice_checked_end_before_start() {
+        let input = [1.0, 2.0f32];
+        let mut output = [0.0f32; 1];
+        assert!(slice_1d_f32_checked(&input, &mut output, 1, 0).is_err());
+    }
+
+    #[test]
+    fn test_embedding_checked_valid() {
+        let weight = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6f32]; // vocab=3, dim=2
+        let indices = [2u32, 0];
+        let mut output = [0.0f32; 4];
+        assert!(embedding_f32_checked(&weight, &indices, &mut output, 2).is_ok());
+    }
+
+    #[test]
+    fn test_embedding_checked_oob() {
+        let weight = [0.1, 0.2, 0.3, 0.4f32]; // vocab=2, dim=2
+        let indices = [5u32]; // out of bounds
+        let mut output = [0.0f32; 2];
+        assert!(embedding_f32_checked(&weight, &indices, &mut output, 2).is_err());
     }
 }

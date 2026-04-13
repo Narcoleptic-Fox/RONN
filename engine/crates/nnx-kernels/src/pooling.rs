@@ -1,5 +1,7 @@
 //! Pooling operations: MaxPool2D, AvgPool2D, GlobalAvgPool.
 
+use nnx_core::error::EngineError;
+
 /// Max pooling 2D
 /// Input: [N, C, H, W], Output: [N, C, H_out, W_out]
 pub fn max_pool2d_f32(
@@ -109,6 +111,35 @@ pub fn global_avg_pool_f32(
     }
 }
 
+/// Checked version of `global_avg_pool_f32`.
+pub fn global_avg_pool_f32_checked(
+    input: &[f32],
+    output: &mut [f32],
+    batch_size: usize,
+    channels: usize,
+    spatial_size: usize,
+) -> nnx_core::error::Result<()> {
+    let expected_in = batch_size * channels * spatial_size;
+    let expected_out = batch_size * channels;
+    if input.len() != expected_in {
+        return Err(EngineError::ShapeMismatch(
+            format!("global_avg_pool: input.len()={} but expected {}", input.len(), expected_in)
+        ));
+    }
+    if output.len() != expected_out {
+        return Err(EngineError::ShapeMismatch(
+            format!("global_avg_pool: output.len()={} but expected {}", output.len(), expected_out)
+        ));
+    }
+    if spatial_size == 0 {
+        return Err(EngineError::ShapeMismatch(
+            "global_avg_pool: spatial_size must be non-zero".to_string()
+        ));
+    }
+    global_avg_pool_f32(input, output, batch_size, channels, spatial_size);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,5 +167,27 @@ mod tests {
         global_avg_pool_f32(&input, &mut output, 1, 2, 4);
         assert!((output[0] - 2.5).abs() < 1e-5);
         assert!((output[1] - 25.0).abs() < 1e-5);
+    }
+
+    // Checked wrapper tests
+    #[test]
+    fn test_global_avg_pool_checked_valid() {
+        let input = [1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0f32];
+        let mut output = [0.0f32; 2];
+        assert!(global_avg_pool_f32_checked(&input, &mut output, 1, 2, 4).is_ok());
+    }
+
+    #[test]
+    fn test_global_avg_pool_checked_bad_input() {
+        let input = [1.0, 2.0f32]; // wrong
+        let mut output = [0.0f32; 2];
+        assert!(global_avg_pool_f32_checked(&input, &mut output, 1, 2, 4).is_err());
+    }
+
+    #[test]
+    fn test_global_avg_pool_checked_zero_spatial() {
+        let input: [f32; 0] = [];
+        let mut output = [0.0f32; 2];
+        assert!(global_avg_pool_f32_checked(&input, &mut output, 1, 2, 0).is_err());
     }
 }

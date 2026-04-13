@@ -20,8 +20,13 @@
 //! | Sampling | Softmax (also in activation), TopK |
 
 pub mod activations;
+pub mod attention;
+pub mod audio;
+pub mod comparison;
 pub mod conv;
+pub mod einsum;
 pub mod elementwise;
+pub mod masking;
 pub mod matmul;
 pub mod normalization;
 pub mod pooling;
@@ -30,3 +35,6 @@ pub mod rope;
 pub mod rms_norm;
 pub mod shape_ops;
 pub mod softmax;
+pub mod ssm;
+pub mod tensor_creation;
+pub mod upsample;

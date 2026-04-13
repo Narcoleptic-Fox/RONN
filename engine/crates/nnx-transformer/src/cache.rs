@@ -82,6 +82,19 @@ impl KVCache {
     pub fn memory_bytes(&self) -> usize {
         self.layers.iter().map(|l| l.memory_bytes()).sum()
     }
+
+    /// Maximum capacity in tokens.
+    pub fn capacity(&self) -> usize {
+        self.layers.first().map_or(0, |l| l.max_seq_len)
+    }
+}
+
+impl nnx_core::engine::KVCacheAccess for KVCache {
+    fn cached_tokens(&self) -> usize { self.position() }
+    fn capacity(&self) -> usize { KVCache::capacity(self) }
+    fn memory_usage_bytes(&self) -> usize { self.memory_bytes() }
+    fn clear(&mut self) { KVCache::clear(self) }
+    fn truncate(&mut self, n: usize) { KVCache::truncate(self, n) }
 }
 
 #[cfg(test)]

@@ -1,21 +1,23 @@
 //! Transformer model architecture for NNX.
 //!
-//! Implements Llama-family transformer inference: GQA attention with RoPE,
-//! SwiGLU FFN, RMSNorm, KV caching, and autoregressive generation.
+//! Supports multiple model architectures: Llama, GPT-2, Phi, Gemma, and Qwen.
+//! Each architecture can use different normalization (RMSNorm/LayerNorm),
+//! FFN variants (SwiGLU/GeGLU/GELU), position encoding (RoPE/partial RoPE/learned),
+//! and block styles (sequential/parallel).
 //!
 //! ## Architecture
 //!
 //! ```text
-//! Token ID → Embedding Lookup → [hidden_dim]
-//!     │
-//!     ├─── Block 0: RMSNorm → Attention (GQA + RoPE + KV Cache) → Residual
-//!     │                → RMSNorm → SwiGLU FFN → Residual
-//!     ├─── Block 1: ...
-//!     ├─── ...
-//!     ├─── Block N: ...
-//!     │
-//!     → Final RMSNorm → LM Head (linear → vocab) → Logits
-//!     → Sampler (temperature, top-k, top-p) → Token ID
+//! Token ID -> Embedding Lookup -> [hidden_dim]
+//!     |
+//!     +--- Block 0: Norm -> Attention (GQA/MHA + RoPE/learned + KV Cache) -> Residual
+//!     |                -> Norm -> FFN (SwiGLU/GeGLU/GELU) -> Residual
+//!     +--- Block 1: ...
+//!     +--- ...
+//!     +--- Block N: ...
+//!     |
+//!     -> Final Norm -> LM Head (linear -> vocab) -> Logits
+//!     -> Sampler (temperature, top-k, top-p) -> Token ID
 //! ```
 //!
 //! ## Quick Start
@@ -45,7 +47,9 @@ pub mod tokenizer;
 
 pub use backend::NnxBackend;
 pub use cache::KVCache;
-pub use config::ModelConfig;
+pub use config::{
+    Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding,
+};
 pub use generate::{GenerateConfig, GenerateOutput, StopReason, generate};
 pub use model::{Model, ModelWeights};
 pub use sampler::SamplerConfig;

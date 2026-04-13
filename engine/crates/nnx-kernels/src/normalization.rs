@@ -5,6 +5,8 @@
 
 use crate::matmul::dot_f32;
 
+use nnx_core::error::EngineError;
+
 /// Layer Normalization: output = ((x - mean) / sqrt(var + eps)) * weight + bias
 ///
 /// Normalizes across the last `norm_size` elements.
@@ -78,6 +80,99 @@ pub fn batch_norm_f32(
     }
 }
 
+// -- Checked wrappers --
+
+/// Checked version of `layer_norm_f32` that validates dimensions before computing.
+pub fn layer_norm_f32_checked(
+    x: &[f32],
+    weight: &[f32],
+    bias: Option<&[f32]>,
+    output: &mut [f32],
+    norm_size: usize,
+    eps: f32,
+) -> nnx_core::error::Result<()> {
+    if x.len() != output.len() {
+        return Err(EngineError::ShapeMismatch(
+            format!("layer_norm: x.len()={} != output.len()={}", x.len(), output.len())
+        ));
+    }
+    if weight.len() != norm_size {
+        return Err(EngineError::ShapeMismatch(
+            format!("layer_norm: weight.len()={} != norm_size={}", weight.len(), norm_size)
+        ));
+    }
+    if norm_size == 0 {
+        return Err(EngineError::ShapeMismatch(
+            "layer_norm: norm_size must be non-zero".to_string()
+        ));
+    }
+    if x.len() % norm_size != 0 {
+        return Err(EngineError::ShapeMismatch(
+            format!("layer_norm: x.len()={} is not divisible by norm_size={}", x.len(), norm_size)
+        ));
+    }
+    if let Some(b) = bias {
+        if b.len() != norm_size {
+            return Err(EngineError::ShapeMismatch(
+                format!("layer_norm: bias.len()={} != norm_size={}", b.len(), norm_size)
+            ));
+        }
+    }
+    layer_norm_f32(x, weight, bias, output, norm_size, eps);
+    Ok(())
+}
+
+/// Checked version of `batch_norm_f32` that validates dimensions before computing.
+pub fn batch_norm_f32_checked(
+    x: &[f32],
+    scale: &[f32],
+    bias: &[f32],
+    running_mean: &[f32],
+    running_var: &[f32],
+    output: &mut [f32],
+    num_channels: usize,
+    spatial_size: usize,
+    eps: f32,
+) -> nnx_core::error::Result<()> {
+    if x.len() != output.len() {
+        return Err(EngineError::ShapeMismatch(
+            format!("batch_norm: x.len()={} != output.len()={}", x.len(), output.len())
+        ));
+    }
+    if scale.len() != num_channels {
+        return Err(EngineError::ShapeMismatch(
+            format!("batch_norm: scale.len()={} != num_channels={}", scale.len(), num_channels)
+        ));
+    }
+    if bias.len() != num_channels {
+        return Err(EngineError::ShapeMismatch(
+            format!("batch_norm: bias.len()={} != num_channels={}", bias.len(), num_channels)
+        ));
+    }
+    if running_mean.len() != num_channels {
+        return Err(EngineError::ShapeMismatch(
+            format!("batch_norm: running_mean.len()={} != num_channels={}", running_mean.len(), num_channels)
+        ));
+    }
+    if running_var.len() != num_channels {
+        return Err(EngineError::ShapeMismatch(
+            format!("batch_norm: running_var.len()={} != num_channels={}", running_var.len(), num_channels)
+        ));
+    }
+    if num_channels == 0 || spatial_size == 0 {
+        return Err(EngineError::ShapeMismatch(
+            "batch_norm: num_channels and spatial_size must be non-zero".to_string()
+        ));
+    }
+    if x.len() % (num_channels * spatial_size) != 0 {
+        return Err(EngineError::ShapeMismatch(
+            format!("batch_norm: x.len()={} not divisible by num_channels*spatial_size={}", x.len(), num_channels * spatial_size)
+        ));
+    }
+    batch_norm_f32(x, scale, bias, running_mean, running_var, output, num_channels, spatial_size, eps);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +204,67 @@ mod tests {
         // Channel 0: (1.0-1.5)/0.5=-1.0, (2.0-1.5)/0.5=1.0
         assert!((out[0] - (-1.0)).abs() < 1e-3);
         assert!((out[1] - 1.0).abs() < 1e-3);
+    }
+
+    // Checked wrapper tests
+    #[test]
+    fn test_layer_norm_checked_valid() {
+        let x = [1.0, 2.0, 3.0, 4.0f32];
+        let w = [1.0, 1.0, 1.0, 1.0f32];
+        let b = [0.0, 0.0, 0.0, 0.0f32];
+        let mut out = [0.0f32; 4];
+        let result = layer_norm_f32_checked(&x, &w, Some(&b), &mut out, 4, 1e-5);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_layer_norm_checked_bad_norm_size() {
+        let x = [1.0, 2.0, 3.0f32]; // not divisible by norm_size=2
+        let w = [1.0, 1.0f32];
+        let mut out = [0.0f32; 3];
+        let result = layer_norm_f32_checked(&x, &w, None, &mut out, 2, 1e-5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_layer_norm_checked_bad_weight() {
+        let x = [1.0, 2.0, 3.0, 4.0f32];
+        let w = [1.0, 1.0f32]; // wrong size for norm_size=4
+        let mut out = [0.0f32; 4];
+        let result = layer_norm_f32_checked(&x, &w, None, &mut out, 4, 1e-5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_layer_norm_checked_output_mismatch() {
+        let x = [1.0, 2.0, 3.0, 4.0f32];
+        let w = [1.0, 1.0, 1.0, 1.0f32];
+        let mut out = [0.0f32; 3]; // wrong size
+        let result = layer_norm_f32_checked(&x, &w, None, &mut out, 4, 1e-5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_batch_norm_checked_valid() {
+        let x = [1.0, 2.0, 3.0, 4.0f32];
+        let scale = [1.0, 1.0f32];
+        let bias = [0.0, 0.0f32];
+        let mean = [1.5, 3.5f32];
+        let var = [0.25, 0.25f32];
+        let mut out = [0.0f32; 4];
+        let result = batch_norm_f32_checked(&x, &scale, &bias, &mean, &var, &mut out, 2, 2, 1e-5);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_batch_norm_checked_bad_scale() {
+        let x = [1.0, 2.0, 3.0, 4.0f32];
+        let scale = [1.0f32]; // wrong for num_channels=2
+        let bias = [0.0, 0.0f32];
+        let mean = [1.5, 3.5f32];
+        let var = [0.25, 0.25f32];
+        let mut out = [0.0f32; 4];
+        let result = batch_norm_f32_checked(&x, &scale, &bias, &mean, &var, &mut out, 2, 2, 1e-5);
+        assert!(result.is_err());
     }
 }

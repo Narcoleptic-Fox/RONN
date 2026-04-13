@@ -6,6 +6,8 @@
 
 use rayon::prelude::*;
 
+use nnx_core::error::EngineError;
+
 // ============================================================
 // SIMD dot product — the innermost loop of everything
 // ============================================================
@@ -224,6 +226,115 @@ pub fn matvec_quantized<'a>(
     }
 }
 
+// ============================================================
+// Checked wrappers — validate dimensions, return Result
+// ============================================================
+
+/// Checked version of `dot_f32` that validates equal lengths.
+pub fn dot_f32_checked(a: &[f32], b: &[f32]) -> nnx_core::error::Result<f32> {
+    if a.len() != b.len() {
+        return Err(EngineError::ShapeMismatch(
+            format!("dot: a.len()={} != b.len()={}", a.len(), b.len())
+        ));
+    }
+    Ok(dot_f32(a, b))
+}
+
+/// Checked version of `matvec_f32` that validates dimensions before computing.
+pub fn matvec_f32_checked(a: &[f32], x: &[f32], y: &mut [f32], m: usize, k: usize) -> nnx_core::error::Result<()> {
+    if a.len() != m * k {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec: a.len()={} but m*k={}", a.len(), m * k)
+        ));
+    }
+    if x.len() != k {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec: x.len()={} but k={}", x.len(), k)
+        ));
+    }
+    if y.len() != m {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec: y.len()={} but m={}", y.len(), m)
+        ));
+    }
+    matvec_f32(a, x, y, m, k);
+    Ok(())
+}
+
+/// Checked version of `matvec_bias_f32` that validates dimensions before computing.
+pub fn matvec_bias_f32_checked(
+    a: &[f32], x: &[f32], bias: &[f32], y: &mut [f32], m: usize, k: usize,
+) -> nnx_core::error::Result<()> {
+    if a.len() != m * k {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec_bias: a.len()={} but m*k={}", a.len(), m * k)
+        ));
+    }
+    if x.len() != k {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec_bias: x.len()={} but k={}", x.len(), k)
+        ));
+    }
+    if bias.len() != m {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec_bias: bias.len()={} but m={}", bias.len(), m)
+        ));
+    }
+    if y.len() != m {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec_bias: y.len()={} but m={}", y.len(), m)
+        ));
+    }
+    matvec_bias_f32(a, x, bias, y, m, k);
+    Ok(())
+}
+
+/// Checked version of `matmul_f32` that validates dimensions before computing.
+pub fn matmul_f32_checked(
+    a: &[f32], b: &[f32], c: &mut [f32], m: usize, k: usize, n: usize,
+) -> nnx_core::error::Result<()> {
+    if a.len() != m * k {
+        return Err(EngineError::ShapeMismatch(
+            format!("matmul: a.len()={} but m*k={}", a.len(), m * k)
+        ));
+    }
+    if b.len() != k * n {
+        return Err(EngineError::ShapeMismatch(
+            format!("matmul: b.len()={} but k*n={}", b.len(), k * n)
+        ));
+    }
+    if c.len() != m * n {
+        return Err(EngineError::ShapeMismatch(
+            format!("matmul: c.len()={} but m*n={}", c.len(), m * n)
+        ));
+    }
+    matmul_f32(a, b, c, m, k, n);
+    Ok(())
+}
+
+/// Checked version of `matvec_quantized` that validates dimensions before computing.
+pub fn matvec_quantized_checked<'a>(
+    row_data: impl Fn(usize) -> &'a [u8] + Sync,
+    x: &[f32],
+    y: &mut [f32],
+    m: usize,
+    k: usize,
+    dtype: nnx_quant::GGMLType,
+) -> nnx_core::error::Result<()> {
+    if x.len() != k {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec_quantized: x.len()={} but k={}", x.len(), k)
+        ));
+    }
+    if y.len() != m {
+        return Err(EngineError::ShapeMismatch(
+            format!("matvec_quantized: y.len()={} but m={}", y.len(), m)
+        ));
+    }
+    matvec_quantized(row_data, x, y, m, k, dtype);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,5 +409,102 @@ mod tests {
         let mut y = [0.0f32; 2];
         matvec_bias_f32(&a, &x, &bias, &mut y, 2, 2);
         assert_eq!(y, [13.0, 25.0]);
+    }
+
+    // Checked wrapper tests
+    #[test]
+    fn test_dot_checked_valid() {
+        let a = [1.0, 2.0, 3.0f32];
+        let b = [4.0, 5.0, 6.0f32];
+        let result = dot_f32_checked(&a, &b);
+        assert!(result.is_ok());
+        assert!((result.unwrap() - 32.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_dot_checked_mismatch() {
+        let a = [1.0, 2.0f32];
+        let b = [4.0, 5.0, 6.0f32];
+        assert!(dot_f32_checked(&a, &b).is_err());
+    }
+
+    #[test]
+    fn test_matvec_checked_valid() {
+        let a = [1.0, 2.0, 3.0, 4.0f32]; // 2x2
+        let x = [1.0, 1.0f32];
+        let mut y = [0.0f32; 2];
+        let result = matvec_f32_checked(&a, &x, &mut y, 2, 2);
+        assert!(result.is_ok());
+        assert_eq!(y, [3.0, 7.0]);
+    }
+
+    #[test]
+    fn test_matvec_checked_bad_a() {
+        let a = [1.0, 2.0, 3.0f32]; // wrong size for m=2, k=2
+        let x = [1.0, 1.0f32];
+        let mut y = [0.0f32; 2];
+        assert!(matvec_f32_checked(&a, &x, &mut y, 2, 2).is_err());
+    }
+
+    #[test]
+    fn test_matvec_checked_bad_x() {
+        let a = [1.0, 2.0, 3.0, 4.0f32];
+        let x = [1.0f32]; // wrong size for k=2
+        let mut y = [0.0f32; 2];
+        assert!(matvec_f32_checked(&a, &x, &mut y, 2, 2).is_err());
+    }
+
+    #[test]
+    fn test_matvec_checked_bad_y() {
+        let a = [1.0, 2.0, 3.0, 4.0f32];
+        let x = [1.0, 1.0f32];
+        let mut y = [0.0f32; 3]; // wrong size for m=2
+        assert!(matvec_f32_checked(&a, &x, &mut y, 2, 2).is_err());
+    }
+
+    #[test]
+    fn test_matmul_checked_valid() {
+        let a = [1.0, 0.0, 0.0, 1.0f32];
+        let b = [1.0, 2.0, 3.0, 4.0f32];
+        let mut c = [0.0f32; 4];
+        let result = matmul_f32_checked(&a, &b, &mut c, 2, 2, 2);
+        assert!(result.is_ok());
+        assert_eq!(c, [1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_matmul_checked_bad_b() {
+        let a = [1.0, 2.0, 3.0, 4.0f32]; // 2x2
+        let b = [5.0, 6.0, 7.0f32]; // wrong size for k=2, n=2
+        let mut c = [0.0f32; 4];
+        assert!(matmul_f32_checked(&a, &b, &mut c, 2, 2, 2).is_err());
+    }
+
+    #[test]
+    fn test_matmul_checked_bad_c() {
+        let a = [1.0, 2.0, 3.0, 4.0f32];
+        let b = [5.0, 6.0, 7.0, 8.0f32];
+        let mut c = [0.0f32; 3]; // wrong size for m=2, n=2
+        assert!(matmul_f32_checked(&a, &b, &mut c, 2, 2, 2).is_err());
+    }
+
+    #[test]
+    fn test_matvec_bias_checked_valid() {
+        let a = [1.0, 0.0, 0.0, 1.0f32];
+        let x = [3.0, 5.0f32];
+        let bias = [10.0, 20.0f32];
+        let mut y = [0.0f32; 2];
+        let result = matvec_bias_f32_checked(&a, &x, &bias, &mut y, 2, 2);
+        assert!(result.is_ok());
+        assert_eq!(y, [13.0, 25.0]);
+    }
+
+    #[test]
+    fn test_matvec_bias_checked_bad_bias() {
+        let a = [1.0, 0.0, 0.0, 1.0f32];
+        let x = [3.0, 5.0f32];
+        let bias = [10.0f32]; // wrong size for m=2
+        let mut y = [0.0f32; 2];
+        assert!(matvec_bias_f32_checked(&a, &x, &bias, &mut y, 2, 2).is_err());
     }
 }

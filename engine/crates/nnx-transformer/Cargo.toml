@@ -10,12 +10,14 @@ description = "Transformer model architecture for NNX"
 nnx-core = { path = "../nnx-core" }
 nnx-quant = { path = "../nnx-quant" }
 nnx-gguf = { path = "../nnx-gguf" }
+nnx-safetensors = { path = "../nnx-safetensors" }
 nnx-kernels = { path = "../nnx-kernels" }
 half.workspace = true
 rayon.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

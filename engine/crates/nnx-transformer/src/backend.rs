@@ -65,10 +65,12 @@ impl InferenceEngine for NnxBackend {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let mut model = match ext {
-            "gguf" => loader::load_gguf(path)
+            "gguf" => loader::load_gguf_with_budget(path, config.memory_budget)
+                .map_err(|e| EngineError::ModelLoad(e))?,
+            "safetensors" => loader::load_safetensors(path)
                 .map_err(|e| EngineError::ModelLoad(e))?,
             _ => return Err(EngineError::UnsupportedFormat(
-                format!("unsupported file extension: .{} (expected .gguf)", ext)
+                format!("unsupported file extension: .{} (expected .gguf or .safetensors)", ext)
             )),
         };
 
@@ -84,13 +86,14 @@ impl InferenceEngine for NnxBackend {
             );
         }
 
-        // Try to load tokenizer from GGUF metadata
-        let tokenizer = if ext == "gguf" {
-            let gguf = nnx_gguf::GGUFFile::open(path)
-                .map_err(|e| EngineError::ModelLoad(format!("failed to reopen GGUF for tokenizer: {}", e)))?;
-            Tokenizer::from_gguf(&gguf.metadata).ok()
-        } else {
-            None
+        // Try to load tokenizer from GGUF metadata (SafeTensors don't embed tokenizers)
+        let tokenizer = match ext {
+            "gguf" => {
+                let gguf = nnx_gguf::GGUFFile::open(path)
+                    .map_err(|e| EngineError::ModelLoad(format!("failed to reopen GGUF for tokenizer: {}", e)))?;
+                Tokenizer::from_gguf(&gguf.metadata).ok()
+            }
+            _ => None,
         };
 
         let cfg = &model.config;
@@ -142,15 +145,17 @@ impl InferenceEngine for NnxBackend {
         let loaded = models.get_mut(&handle.0)
             .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
 
-        // Process each sequence in the batch (currently sequential)
-        // For the common single-sequence case this is fine.
         let mut all_logits = Vec::new();
 
         for seq in &input.token_ids {
-            let mut last_logits = Vec::new();
-            for &token in seq {
-                last_logits = loaded.model.forward_token(token);
-            }
+            // Use batch prefill for multi-token sequences
+            let last_logits = if seq.len() > 1 {
+                loaded.model.forward_batch(seq)
+            } else if seq.len() == 1 {
+                loaded.model.forward_token(seq[0])
+            } else {
+                vec![0.0; loaded.model.config.vocab_size]
+            };
             all_logits.extend_from_slice(&last_logits);
         }
 
@@ -170,28 +175,91 @@ impl InferenceEngine for NnxBackend {
 
     fn forward_layers(
         &self,
-        _handle: ModelHandle,
-        _input: &Tensor,
-        _start_layer: usize,
-        _end_layer: usize,
+        handle: ModelHandle,
+        input: &Tensor,
+        start_layer: usize,
+        end_layer: usize,
     ) -> Result<Tensor> {
-        // TODO: implement partial forward pass for early-exit and self-speculative
-        Err(EngineError::Kernel("forward_layers not yet implemented".into()))
+        let mut models = self.models.lock().unwrap();
+        let loaded = models.get_mut(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+
+        let cfg = &loaded.model.config;
+
+        if start_layer >= cfg.num_layers || end_layer > cfg.num_layers || start_layer >= end_layer {
+            return Err(EngineError::Kernel(format!(
+                "invalid layer range [{}, {}), model has {} layers",
+                start_layer, end_layer, cfg.num_layers
+            )));
+        }
+
+        let hidden_dim = cfg.hidden_dim;
+        let input_data = input.as_f32();
+        if input_data.len() != hidden_dim {
+            return Err(EngineError::ShapeMismatch(format!(
+                "forward_layers input should be [{}], got [{}]",
+                hidden_dim, input_data.len()
+            )));
+        }
+
+        let mut hidden = input_data.to_vec();
+        let position = loaded.model.cache.position();
+
+        for layer_idx in start_layer..end_layer {
+            crate::block::forward_block(
+                &mut hidden,
+                &loaded.model.weights.layers[layer_idx],
+                loaded.model.cache.layer_mut(layer_idx),
+                position,
+                cfg,
+            );
+        }
+
+        Tensor::from_f32(&hidden, Shape::new(&[hidden_dim]))
     }
 
-    fn model_info(&self, handle: ModelHandle) -> Result<&ModelInfo> {
-        // NOTE: This returns a reference into the mutex-guarded map.
-        // In practice, RONN should call this once and cache the result.
-        // For now, this won't compile as-is because of the borrow checker.
-        // We'll need to restructure for production use.
-        // Workaround: use a separate Arc<ModelInfo> stored outside the mutex.
-        Err(EngineError::ModelLoad("use model_info_cloned() instead".into()))
+    fn model_info(&self, handle: ModelHandle) -> Result<ModelInfo> {
+        let models = self.models.lock().unwrap();
+        let loaded = models.get(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+        Ok(loaded.info.clone())
     }
 
-    fn kv_cache(&self, _handle: ModelHandle) -> Result<&mut dyn KVCacheAccess> {
-        // Same borrow issue as model_info — needs architectural revision
-        // for the mutex-based approach. For now, callers use reset_cache().
-        Err(EngineError::Cache("direct kv_cache access not available through mutex; use dedicated methods".into()))
+    fn cache_tokens(&self, handle: ModelHandle) -> Result<usize> {
+        let models = self.models.lock().unwrap();
+        let loaded = models.get(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+        Ok(loaded.model.position())
+    }
+
+    fn cache_capacity(&self, handle: ModelHandle) -> Result<usize> {
+        let models = self.models.lock().unwrap();
+        let loaded = models.get(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+        Ok(loaded.model.config.max_context_length)
+    }
+
+    fn cache_memory_bytes(&self, handle: ModelHandle) -> Result<usize> {
+        let models = self.models.lock().unwrap();
+        let loaded = models.get(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+        Ok(loaded.model.cache_memory_bytes())
+    }
+
+    fn cache_clear(&self, handle: ModelHandle) -> Result<()> {
+        let mut models = self.models.lock().unwrap();
+        let loaded = models.get_mut(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+        loaded.model.reset();
+        Ok(())
+    }
+
+    fn cache_truncate(&self, handle: ModelHandle, n: usize) -> Result<()> {
+        let mut models = self.models.lock().unwrap();
+        let loaded = models.get_mut(&handle.0)
+            .ok_or_else(|| EngineError::ModelLoad("model handle not found".into()))?;
+        loaded.model.cache.truncate(n);
+        Ok(())
     }
 
     fn request_layer_features(&self, handle: ModelHandle, layer_indices: &[usize]) -> Result<()> {
@@ -285,35 +353,15 @@ mod tests {
     fn backend_with_tiny_model() -> (NnxBackend, ModelHandle) {
         let backend = NnxBackend::new();
 
-        let config = ModelConfig {
-            architecture: "test".into(),
-            num_layers: 1,
-            hidden_dim: 8,
-            num_heads: 2,
-            num_kv_heads: 2,
-            head_dim: 4,
-            intermediate_dim: 16,
-            vocab_size: 32,
-            max_context_length: 64,
-            rope_freq_base: 10000.0,
-            rms_norm_eps: 1e-5,
-        };
+        let mut config = ModelConfig::test_llama(8, 2, 2, 4, 16, 32);
+        config.num_layers = 1;
 
         let hd = 8;
         let weights = ModelWeights {
             token_embedding: vec![0.1; 32 * hd],
-            layers: vec![BlockWeights {
-                attn_norm: vec![1.0; hd],
-                ffn_norm: vec![1.0; hd],
-                wq: vec![0.01; 8 * hd],
-                wk: vec![0.01; 8 * hd],
-                wv: vec![0.01; 8 * hd],
-                wo: vec![0.01; hd * 8],
-                w_gate: vec![0.01; 16 * hd],
-                w_up: vec![0.01; 16 * hd],
-                w_down: vec![0.01; hd * 16],
-            }],
+            layers: vec![BlockWeights::test_no_bias(hd, 2, 2, 4, 16)],
             final_norm: vec![1.0; hd],
+            final_norm_bias: None,
             lm_head: vec![0.01; 32 * hd],
         };
 
