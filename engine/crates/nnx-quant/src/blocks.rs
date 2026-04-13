@@ -57,3 +57,5 @@ pub struct BlockQ6K {
 const _: () = assert!(std::mem::size_of::<BlockQ4_0>() == 18);
 const _: () = assert!(std::mem::size_of::<BlockQ8_0>() == 34);
 const _: () = assert!(std::mem::size_of::<BlockQ4K>() == 144);
+const _: () = assert!(std::mem::size_of::<BlockQ5K>() == 176);
+const _: () = assert!(std::mem::size_of::<BlockQ6K>() == 210);

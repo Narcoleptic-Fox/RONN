@@ -21,19 +21,18 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use nnx_transformer::{loader, generate, GenerateConfig, SamplerConfig};
+//! use nnx_transformer::backend::NnxBackend;
+//! use nnx_core::engine::{InferenceEngine, LoadConfig};
+//! use std::path::Path;
 //!
-//! let mut model = loader::load_gguf(std::path::Path::new("model.gguf")).unwrap();
-//! let config = GenerateConfig {
-//!     max_tokens: 100,
-//!     sampler: SamplerConfig::greedy(),
-//!     ..Default::default()
-//! };
-//! let result = generate(&mut model, &[1], &config); // [1] = BOS token
-//! println!("Generated {} tokens", result.tokens.len());
+//! let backend = NnxBackend::new();
+//! let handle = backend.load_model(Path::new("model.gguf"), &LoadConfig::default()).unwrap();
+//! let info = backend.model_info_cloned(handle).unwrap();
+//! println!("Loaded: {} — {} layers", info.architecture, info.num_layers);
 //! ```
 
 pub mod attention;
+pub mod backend;
 pub mod block;
 pub mod cache;
 pub mod config;
@@ -44,6 +43,7 @@ pub mod model;
 pub mod sampler;
 pub mod tokenizer;
 
+pub use backend::NnxBackend;
 pub use cache::KVCache;
 pub use config::ModelConfig;
 pub use generate::{GenerateConfig, GenerateOutput, StopReason, generate};

@@ -12,6 +12,7 @@ nnx-quant = { path = "../nnx-quant" }
 nnx-gguf = { path = "../nnx-gguf" }
 nnx-kernels = { path = "../nnx-kernels" }
 half.workspace = true
+rayon.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 serde.workspace = true

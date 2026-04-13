@@ -84,6 +84,48 @@ pub fn dequantize_q6_k(block: &BlockQ6K, output: &mut [f32; 256]) {
     }
 }
 
+/// Dequantize a Q5_K block (256 values).
+///
+/// Q5_K: 5-bit quantization. Low 4 bits in qs[], high bit in qh[].
+/// Same scale packing as Q4_K.
+pub fn dequantize_q5_k(block: &BlockQ5K, output: &mut [f32; 256]) {
+    let d = block.d.to_f32();
+    let dmin = block.dmin.to_f32();
+
+    // Unpack sub-block scales and mins (same as Q4_K)
+    let mut sc = [0u8; 8];
+    let mut mn = [0u8; 8];
+    for j in 0..4 {
+        sc[j] = block.scales[j] & 63;
+        mn[j] = block.scales[j + 4] & 63;
+    }
+    for j in 4..8 {
+        sc[j] = (block.scales[j + 4] & 0x0F) | ((block.scales[j - 4] >> 6) << 4);
+        mn[j] = (block.scales[j + 4] >> 4) | ((block.scales[j] >> 6) << 4);
+    }
+
+    // Low nibbles (first 128 values) and high nibbles (next 128)
+    for j in 0..128 {
+        let sub_lo = j / 32;
+        let sub_hi = sub_lo + 4;
+
+        let lo_nibble = (block.qs[j] & 0x0F) as u32;
+        let hi_nibble = ((block.qs[j] >> 4) & 0x0F) as u32;
+
+        // Extract the 5th bit from qh[]
+        let qh_byte = block.qh[j / 8];
+        let bit_lo = ((qh_byte >> (j % 8)) & 1) as u32;
+        let qh_byte2 = block.qh[(j + 128) / 8];
+        let bit_hi = ((qh_byte2 >> ((j + 128) % 8)) & 1) as u32;
+
+        let val_lo = lo_nibble | (bit_lo << 4); // 5-bit value
+        let val_hi = hi_nibble | (bit_hi << 4);
+
+        output[j] = d * sc[sub_lo] as f32 * val_lo as f32 - dmin * mn[sub_lo] as f32;
+        output[j + 128] = d * sc[sub_hi] as f32 * val_hi as f32 - dmin * mn[sub_hi] as f32;
+    }
+}
+
 /// Dequantize BF16 values to f32.
 fn dequantize_bf16(data: &[u8], output: &mut [f32]) -> usize {
     let count = (data.len() / 2).min(output.len());
@@ -120,6 +162,7 @@ pub fn dequantize(data: &[u8], dtype: GGMLType, output: &mut [f32]) -> usize {
         GGMLType::Q4_0 => dequant_blocks::<BlockQ4_0, 32>(data, output, dequantize_q4_0),
         GGMLType::Q8_0 => dequant_blocks::<BlockQ8_0, 32>(data, output, dequantize_q8_0),
         GGMLType::Q4K => dequant_blocks::<BlockQ4K, 256>(data, output, dequantize_q4_k),
+        GGMLType::Q5K => dequant_blocks::<BlockQ5K, 256>(data, output, dequantize_q5_k),
         GGMLType::Q6K => dequant_blocks::<BlockQ6K, 256>(data, output, dequantize_q6_k),
         _ => 0,
     }
