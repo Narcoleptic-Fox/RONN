@@ -76,13 +76,15 @@ pub fn stft_f32_checked(
     hop_length: usize,
 ) -> nnx_core::error::Result<usize> {
     if window.len() != n_fft {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft: window.len()={} but n_fft={}", window.len(), n_fft)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft: window.len()={} but n_fft={}",
+            window.len(),
+            n_fft
+        )));
     }
     if hop_length == 0 {
         return Err(EngineError::Kernel(
-            "stft: hop_length must be non-zero".to_string()
+            "stft: hop_length must be non-zero".to_string(),
         ));
     }
     let freq_bins = n_fft / 2 + 1;
@@ -92,16 +94,27 @@ pub fn stft_f32_checked(
         0
     };
     if output_real.len() < num_frames * freq_bins {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft: output_real.len()={} but need at least {}", output_real.len(), num_frames * freq_bins)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft: output_real.len()={} but need at least {}",
+            output_real.len(),
+            num_frames * freq_bins
+        )));
     }
     if output_imag.len() < num_frames * freq_bins {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft: output_imag.len()={} but need at least {}", output_imag.len(), num_frames * freq_bins)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft: output_imag.len()={} but need at least {}",
+            output_imag.len(),
+            num_frames * freq_bins
+        )));
     }
-    Ok(stft_f32(signal, output_real, output_imag, window, n_fft, hop_length))
+    Ok(stft_f32(
+        signal,
+        output_real,
+        output_imag,
+        window,
+        n_fft,
+        hop_length,
+    ))
 }
 
 /// Compute the magnitude spectrogram from STFT output.
@@ -117,16 +130,24 @@ pub fn stft_magnitude_f32(real: &[f32], imag: &[f32], output: &mut [f32]) {
 }
 
 /// Checked version of `stft_magnitude_f32`.
-pub fn stft_magnitude_f32_checked(real: &[f32], imag: &[f32], output: &mut [f32]) -> nnx_core::error::Result<()> {
+pub fn stft_magnitude_f32_checked(
+    real: &[f32],
+    imag: &[f32],
+    output: &mut [f32],
+) -> nnx_core::error::Result<()> {
     if real.len() != imag.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft_magnitude: real.len()={} != imag.len()={}", real.len(), imag.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft_magnitude: real.len()={} != imag.len()={}",
+            real.len(),
+            imag.len()
+        )));
     }
     if real.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft_magnitude: real.len()={} != output.len()={}", real.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft_magnitude: real.len()={} != output.len()={}",
+            real.len(),
+            output.len()
+        )));
     }
     stft_magnitude_f32(real, imag, output);
     Ok(())
@@ -142,16 +163,24 @@ pub fn stft_power_f32(real: &[f32], imag: &[f32], output: &mut [f32]) {
 }
 
 /// Checked version of `stft_power_f32`.
-pub fn stft_power_f32_checked(real: &[f32], imag: &[f32], output: &mut [f32]) -> nnx_core::error::Result<()> {
+pub fn stft_power_f32_checked(
+    real: &[f32],
+    imag: &[f32],
+    output: &mut [f32],
+) -> nnx_core::error::Result<()> {
     if real.len() != imag.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft_power: real.len()={} != imag.len()={}", real.len(), imag.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft_power: real.len()={} != imag.len()={}",
+            real.len(),
+            imag.len()
+        )));
     }
     if real.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("stft_power: real.len()={} != output.len()={}", real.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "stft_power: real.len()={} != output.len()={}",
+            real.len(),
+            output.len()
+        )));
     }
     stft_power_f32(real, imag, output);
     Ok(())
@@ -255,14 +284,17 @@ pub fn mel_filterbank_f32_checked(
 ) -> nnx_core::error::Result<()> {
     let freq_bins = n_fft / 2 + 1;
     if output.len() != n_mels * freq_bins {
-        return Err(EngineError::ShapeMismatch(
-            format!("mel_filterbank: output.len()={} but n_mels*freq_bins={}", output.len(), n_mels * freq_bins)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "mel_filterbank: output.len()={} but n_mels*freq_bins={}",
+            output.len(),
+            n_mels * freq_bins
+        )));
     }
     if sample_rate <= 0.0 {
-        return Err(EngineError::Kernel(
-            format!("mel_filterbank: sample_rate must be positive, got {}", sample_rate)
-        ));
+        return Err(EngineError::Kernel(format!(
+            "mel_filterbank: sample_rate must be positive, got {}",
+            sample_rate
+        )));
     }
     mel_filterbank_f32(output, n_mels, n_fft, sample_rate, f_min, f_max);
     Ok(())
@@ -308,21 +340,34 @@ pub fn apply_mel_filterbank_f32_checked(
     freq_bins: usize,
 ) -> nnx_core::error::Result<()> {
     if filterbank.len() != n_mels * freq_bins {
-        return Err(EngineError::ShapeMismatch(
-            format!("apply_mel_filterbank: filterbank.len()={} but n_mels*freq_bins={}", filterbank.len(), n_mels * freq_bins)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "apply_mel_filterbank: filterbank.len()={} but n_mels*freq_bins={}",
+            filterbank.len(),
+            n_mels * freq_bins
+        )));
     }
     if spectrogram.len() != num_frames * freq_bins {
-        return Err(EngineError::ShapeMismatch(
-            format!("apply_mel_filterbank: spectrogram.len()={} but num_frames*freq_bins={}", spectrogram.len(), num_frames * freq_bins)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "apply_mel_filterbank: spectrogram.len()={} but num_frames*freq_bins={}",
+            spectrogram.len(),
+            num_frames * freq_bins
+        )));
     }
     if output.len() != num_frames * n_mels {
-        return Err(EngineError::ShapeMismatch(
-            format!("apply_mel_filterbank: output.len()={} but num_frames*n_mels={}", output.len(), num_frames * n_mels)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "apply_mel_filterbank: output.len()={} but num_frames*n_mels={}",
+            output.len(),
+            num_frames * n_mels
+        )));
     }
-    apply_mel_filterbank_f32(filterbank, spectrogram, output, num_frames, n_mels, freq_bins);
+    apply_mel_filterbank_f32(
+        filterbank,
+        spectrogram,
+        output,
+        num_frames,
+        n_mels,
+        freq_bins,
+    );
     Ok(())
 }
 
@@ -337,9 +382,11 @@ pub fn log_mel_f32(x: &[f32], output: &mut [f32], eps: f32) {
 /// Checked version of `log_mel_f32`.
 pub fn log_mel_f32_checked(x: &[f32], output: &mut [f32], eps: f32) -> nnx_core::error::Result<()> {
     if x.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("log_mel: x.len()={} != output.len()={}", x.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "log_mel: x.len()={} != output.len()={}",
+            x.len(),
+            output.len()
+        )));
     }
     log_mel_f32(x, output, eps);
     Ok(())

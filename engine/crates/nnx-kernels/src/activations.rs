@@ -11,7 +11,9 @@ pub fn relu_f32(x: &[f32], output: &mut [f32]) {
 }
 
 pub fn relu_f32_inplace(x: &mut [f32]) {
-    for v in x.iter_mut() { *v = v.max(0.0); }
+    for v in x.iter_mut() {
+        *v = v.max(0.0);
+    }
 }
 
 /// Sigmoid: 1 / (1 + exp(-x))
@@ -74,7 +76,11 @@ pub fn leaky_relu_f32(x: &[f32], output: &mut [f32], alpha: f32) {
 pub fn elu_f32(x: &[f32], output: &mut [f32], alpha: f32) {
     assert_eq!(x.len(), output.len());
     for i in 0..x.len() {
-        output[i] = if x[i] > 0.0 { x[i] } else { alpha * (x[i].exp() - 1.0) };
+        output[i] = if x[i] > 0.0 {
+            x[i]
+        } else {
+            alpha * (x[i].exp() - 1.0)
+        };
     }
 }
 
@@ -82,18 +88,24 @@ pub fn elu_f32(x: &[f32], output: &mut [f32], alpha: f32) {
 pub fn mul_f32(a: &[f32], b: &[f32], output: &mut [f32]) {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), output.len());
-    for i in 0..a.len() { output[i] = a[i] * b[i]; }
+    for i in 0..a.len() {
+        output[i] = a[i] * b[i];
+    }
 }
 
 pub fn mul_f32_inplace(a: &mut [f32], b: &[f32]) {
     assert_eq!(a.len(), b.len());
-    for i in 0..a.len() { a[i] *= b[i]; }
+    for i in 0..a.len() {
+        a[i] *= b[i];
+    }
 }
 
 /// Element-wise add in-place: a += b
 pub fn add_f32_inplace(a: &mut [f32], b: &[f32]) {
     assert_eq!(a.len(), b.len());
-    for i in 0..a.len() { a[i] += b[i]; }
+    for i in 0..a.len() {
+        a[i] += b[i];
+    }
 }
 
 /// Clip values to [min, max] range

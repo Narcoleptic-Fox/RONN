@@ -6,6 +6,7 @@
 
 use crate::block::BlockWeights;
 use crate::config::{FFNType, ModelConfig};
+use crate::weights::Matrix;
 use rayon::prelude::*;
 
 /// Architecture-aware FFN forward pass.
@@ -16,56 +17,90 @@ pub fn ffn_forward(hidden: &[f32], weights: &BlockWeights, config: &ModelConfig)
     let intermediate_dim = config.intermediate_dim;
 
     match config.ffn_type {
-        FFNType::SwiGLU => {
-            swiglu_ffn(
-                hidden,
-                &weights.w_gate,
-                &weights.w_up,
-                &weights.w_down,
-                hidden_dim,
-                intermediate_dim,
-            )
-        }
-        FFNType::GeGLU => {
-            geglu_ffn(
-                hidden,
-                &weights.w_gate,
-                &weights.w_up,
-                &weights.w_down,
-                hidden_dim,
-                intermediate_dim,
-            )
-        }
-        FFNType::GELU => {
-            gelu_ffn(
-                hidden,
-                &weights.w_gate,
-                &weights.w_down,
-                hidden_dim,
-                intermediate_dim,
-            )
-        }
+        FFNType::SwiGLU => swiglu_ffn(
+            hidden,
+            &weights.w_gate,
+            &weights.w_up,
+            &weights.w_down,
+            hidden_dim,
+            intermediate_dim,
+        ),
+        FFNType::GeGLU => geglu_ffn(
+            hidden,
+            &weights.w_gate,
+            &weights.w_up,
+            &weights.w_down,
+            hidden_dim,
+            intermediate_dim,
+        ),
+        FFNType::GELU => gelu_ffn(
+            hidden,
+            &weights.w_gate,
+            &weights.w_down,
+            hidden_dim,
+            intermediate_dim,
+        ),
+    }
+}
+
+/// Batched FFN forward for prompt prefill.
+pub fn ffn_forward_batch(
+    hidden_batch: &[f32],
+    batch_size: usize,
+    weights: &BlockWeights,
+    config: &ModelConfig,
+) -> Vec<f32> {
+    let hidden_dim = config.hidden_dim;
+    let intermediate_dim = config.intermediate_dim;
+
+    match config.ffn_type {
+        FFNType::SwiGLU => swiglu_ffn_batch(
+            hidden_batch,
+            batch_size,
+            &weights.w_gate,
+            &weights.w_up,
+            &weights.w_down,
+            hidden_dim,
+            intermediate_dim,
+        ),
+        FFNType::GeGLU => geglu_ffn_batch(
+            hidden_batch,
+            batch_size,
+            &weights.w_gate,
+            &weights.w_up,
+            &weights.w_down,
+            hidden_dim,
+            intermediate_dim,
+        ),
+        FFNType::GELU => gelu_ffn_batch(
+            hidden_batch,
+            batch_size,
+            &weights.w_gate,
+            &weights.w_down,
+            hidden_dim,
+            intermediate_dim,
+        ),
     }
 }
 
 /// SwiGLU FFN: gate and up projections computed in parallel, then SiLU + element-wise mul + down.
 pub fn swiglu_ffn(
     hidden: &[f32],
-    w_gate: &[f32],
-    w_up: &[f32],
-    w_down: &[f32],
+    w_gate: &Matrix,
+    w_up: &Matrix,
+    w_down: &Matrix,
     hidden_dim: usize,
     intermediate_dim: usize,
 ) -> Vec<f32> {
     let (mut gate, up) = rayon::join(
         || {
             let mut g = vec![0.0f32; intermediate_dim];
-            nnx_kernels::matmul::matvec_f32(w_gate, hidden, &mut g, intermediate_dim, hidden_dim);
+            w_gate.matvec(hidden, &mut g);
             g
         },
         || {
             let mut u = vec![0.0f32; intermediate_dim];
-            nnx_kernels::matmul::matvec_f32(w_up, hidden, &mut u, intermediate_dim, hidden_dim);
+            w_up.matvec(hidden, &mut u);
             u
         },
     );
@@ -76,29 +111,59 @@ pub fn swiglu_ffn(
 
     // down projection
     let mut output = vec![0.0f32; hidden_dim];
-    nnx_kernels::matmul::matvec_f32(w_down, &gate, &mut output, hidden_dim, intermediate_dim);
+    w_down.matvec(&gate, &mut output);
 
+    output
+}
+
+fn swiglu_ffn_batch(
+    hidden_batch: &[f32],
+    batch_size: usize,
+    w_gate: &Matrix,
+    w_up: &Matrix,
+    w_down: &Matrix,
+    hidden_dim: usize,
+    intermediate_dim: usize,
+) -> Vec<f32> {
+    let (mut gate, up) = rayon::join(
+        || {
+            let mut g = vec![0.0f32; batch_size * intermediate_dim];
+            w_gate.matmul_input_rows(hidden_batch, batch_size, &mut g);
+            g
+        },
+        || {
+            let mut u = vec![0.0f32; batch_size * intermediate_dim];
+            w_up.matmul_input_rows(hidden_batch, batch_size, &mut u);
+            u
+        },
+    );
+
+    nnx_kernels::activations::silu_f32_inplace(&mut gate);
+    nnx_kernels::activations::mul_f32_inplace(&mut gate, &up);
+
+    let mut output = vec![0.0f32; batch_size * hidden_dim];
+    w_down.matmul_input_rows(&gate, batch_size, &mut output);
     output
 }
 
 /// GeGLU FFN: like SwiGLU but with GELU activation instead of SiLU (used by Gemma).
 fn geglu_ffn(
     hidden: &[f32],
-    w_gate: &[f32],
-    w_up: &[f32],
-    w_down: &[f32],
+    w_gate: &Matrix,
+    w_up: &Matrix,
+    w_down: &Matrix,
     hidden_dim: usize,
     intermediate_dim: usize,
 ) -> Vec<f32> {
     let (mut gate, up) = rayon::join(
         || {
             let mut g = vec![0.0f32; intermediate_dim];
-            nnx_kernels::matmul::matvec_f32(w_gate, hidden, &mut g, intermediate_dim, hidden_dim);
+            w_gate.matvec(hidden, &mut g);
             g
         },
         || {
             let mut u = vec![0.0f32; intermediate_dim];
-            nnx_kernels::matmul::matvec_f32(w_up, hidden, &mut u, intermediate_dim, hidden_dim);
+            w_up.matvec(hidden, &mut u);
             u
         },
     );
@@ -109,8 +174,38 @@ fn geglu_ffn(
 
     // down projection
     let mut output = vec![0.0f32; hidden_dim];
-    nnx_kernels::matmul::matvec_f32(w_down, &gate, &mut output, hidden_dim, intermediate_dim);
+    w_down.matvec(&gate, &mut output);
 
+    output
+}
+
+fn geglu_ffn_batch(
+    hidden_batch: &[f32],
+    batch_size: usize,
+    w_gate: &Matrix,
+    w_up: &Matrix,
+    w_down: &Matrix,
+    hidden_dim: usize,
+    intermediate_dim: usize,
+) -> Vec<f32> {
+    let (mut gate, up) = rayon::join(
+        || {
+            let mut g = vec![0.0f32; batch_size * intermediate_dim];
+            w_gate.matmul_input_rows(hidden_batch, batch_size, &mut g);
+            g
+        },
+        || {
+            let mut u = vec![0.0f32; batch_size * intermediate_dim];
+            w_up.matmul_input_rows(hidden_batch, batch_size, &mut u);
+            u
+        },
+    );
+
+    nnx_kernels::activations::gelu_f32_inplace(&mut gate);
+    nnx_kernels::activations::mul_f32_inplace(&mut gate, &up);
+
+    let mut output = vec![0.0f32; batch_size * hidden_dim];
+    w_down.matmul_input_rows(&gate, batch_size, &mut output);
     output
 }
 
@@ -120,18 +215,35 @@ fn geglu_ffn(
 /// `w_up` is unused for this variant.
 fn gelu_ffn(
     hidden: &[f32],
-    w_fc1: &[f32],
-    w_fc2: &[f32],
+    w_fc1: &Matrix,
+    w_fc2: &Matrix,
     hidden_dim: usize,
     intermediate_dim: usize,
 ) -> Vec<f32> {
     let mut intermediate = vec![0.0f32; intermediate_dim];
-    nnx_kernels::matmul::matvec_f32(w_fc1, hidden, &mut intermediate, intermediate_dim, hidden_dim);
+    w_fc1.matvec(hidden, &mut intermediate);
     nnx_kernels::activations::gelu_f32_inplace(&mut intermediate);
 
     let mut output = vec![0.0f32; hidden_dim];
-    nnx_kernels::matmul::matvec_f32(w_fc2, &intermediate, &mut output, hidden_dim, intermediate_dim);
+    w_fc2.matvec(&intermediate, &mut output);
 
+    output
+}
+
+fn gelu_ffn_batch(
+    hidden_batch: &[f32],
+    batch_size: usize,
+    w_fc1: &Matrix,
+    w_fc2: &Matrix,
+    hidden_dim: usize,
+    intermediate_dim: usize,
+) -> Vec<f32> {
+    let mut intermediate = vec![0.0f32; batch_size * intermediate_dim];
+    w_fc1.matmul_input_rows(hidden_batch, batch_size, &mut intermediate);
+    nnx_kernels::activations::gelu_f32_inplace(&mut intermediate);
+
+    let mut output = vec![0.0f32; batch_size * hidden_dim];
+    w_fc2.matmul_input_rows(&intermediate, batch_size, &mut output);
     output
 }
 
@@ -145,11 +257,30 @@ mod tests {
         let intermediate_dim = 16;
 
         let hidden = vec![1.0f32; hidden_dim];
-        let w_gate = vec![0.1f32; intermediate_dim * hidden_dim];
-        let w_up = vec![0.1f32; intermediate_dim * hidden_dim];
-        let w_down = vec![0.1f32; hidden_dim * intermediate_dim];
+        let w_gate = Matrix::dense(
+            vec![0.1f32; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_up = Matrix::dense(
+            vec![0.1f32; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_down = Matrix::dense(
+            vec![0.1f32; hidden_dim * intermediate_dim],
+            hidden_dim,
+            intermediate_dim,
+        );
 
-        let output = swiglu_ffn(&hidden, &w_gate, &w_up, &w_down, hidden_dim, intermediate_dim);
+        let output = swiglu_ffn(
+            &hidden,
+            &w_gate,
+            &w_up,
+            &w_down,
+            hidden_dim,
+            intermediate_dim,
+        );
         assert_eq!(output.len(), hidden_dim);
         assert!(output.iter().all(|v| v.is_finite()));
     }
@@ -160,12 +291,44 @@ mod tests {
         let intermediate_dim = 64;
 
         let hidden: Vec<f32> = (0..hidden_dim).map(|i| (i as f32) * 0.01).collect();
-        let w_gate: Vec<f32> = (0..intermediate_dim * hidden_dim).map(|i| ((i % 13) as f32) * 0.001).collect();
-        let w_up: Vec<f32> = (0..intermediate_dim * hidden_dim).map(|i| ((i % 11) as f32) * 0.001).collect();
-        let w_down: Vec<f32> = (0..hidden_dim * intermediate_dim).map(|i| ((i % 7) as f32) * 0.001).collect();
+        let w_gate = Matrix::dense(
+            (0..intermediate_dim * hidden_dim)
+                .map(|i| ((i % 13) as f32) * 0.001)
+                .collect(),
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_up = Matrix::dense(
+            (0..intermediate_dim * hidden_dim)
+                .map(|i| ((i % 11) as f32) * 0.001)
+                .collect(),
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_down = Matrix::dense(
+            (0..hidden_dim * intermediate_dim)
+                .map(|i| ((i % 7) as f32) * 0.001)
+                .collect(),
+            hidden_dim,
+            intermediate_dim,
+        );
 
-        let r1 = swiglu_ffn(&hidden, &w_gate, &w_up, &w_down, hidden_dim, intermediate_dim);
-        let r2 = swiglu_ffn(&hidden, &w_gate, &w_up, &w_down, hidden_dim, intermediate_dim);
+        let r1 = swiglu_ffn(
+            &hidden,
+            &w_gate,
+            &w_up,
+            &w_down,
+            hidden_dim,
+            intermediate_dim,
+        );
+        let r2 = swiglu_ffn(
+            &hidden,
+            &w_gate,
+            &w_up,
+            &w_down,
+            hidden_dim,
+            intermediate_dim,
+        );
 
         for i in 0..hidden_dim {
             assert!((r1[i] - r2[i]).abs() < 1e-6, "non-deterministic at {}", i);
@@ -178,20 +341,51 @@ mod tests {
         let intermediate_dim = 16;
 
         let hidden = vec![1.0f32; hidden_dim];
-        let w_gate = vec![0.1f32; intermediate_dim * hidden_dim];
-        let w_up = vec![0.1f32; intermediate_dim * hidden_dim];
-        let w_down = vec![0.1f32; hidden_dim * intermediate_dim];
+        let w_gate = Matrix::dense(
+            vec![0.1f32; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_up = Matrix::dense(
+            vec![0.1f32; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_down = Matrix::dense(
+            vec![0.1f32; hidden_dim * intermediate_dim],
+            hidden_dim,
+            intermediate_dim,
+        );
 
-        let output = geglu_ffn(&hidden, &w_gate, &w_up, &w_down, hidden_dim, intermediate_dim);
+        let output = geglu_ffn(
+            &hidden,
+            &w_gate,
+            &w_up,
+            &w_down,
+            hidden_dim,
+            intermediate_dim,
+        );
         assert_eq!(output.len(), hidden_dim);
         assert!(output.iter().all(|v| v.is_finite()));
 
         // GeGLU should produce different results than SwiGLU due to different activation
-        let swiglu_output = swiglu_ffn(&hidden, &w_gate, &w_up, &w_down, hidden_dim, intermediate_dim);
-        let diff: f32 = output.iter().zip(swiglu_output.iter())
+        let swiglu_output = swiglu_ffn(
+            &hidden,
+            &w_gate,
+            &w_up,
+            &w_down,
+            hidden_dim,
+            intermediate_dim,
+        );
+        let diff: f32 = output
+            .iter()
+            .zip(swiglu_output.iter())
             .map(|(a, b)| (a - b).abs())
             .sum();
-        assert!(diff > 1e-6, "GeGLU and SwiGLU should produce different outputs");
+        assert!(
+            diff > 1e-6,
+            "GeGLU and SwiGLU should produce different outputs"
+        );
     }
 
     #[test]
@@ -200,8 +394,16 @@ mod tests {
         let intermediate_dim = 16;
 
         let hidden = vec![1.0f32; hidden_dim];
-        let w_fc1 = vec![0.1f32; intermediate_dim * hidden_dim];
-        let w_fc2 = vec![0.1f32; hidden_dim * intermediate_dim];
+        let w_fc1 = Matrix::dense(
+            vec![0.1f32; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        );
+        let w_fc2 = Matrix::dense(
+            vec![0.1f32; hidden_dim * intermediate_dim],
+            hidden_dim,
+            intermediate_dim,
+        );
 
         let output = gelu_ffn(&hidden, &w_fc1, &w_fc2, hidden_dim, intermediate_dim);
         assert_eq!(output.len(), hidden_dim);
@@ -218,7 +420,11 @@ mod tests {
 
         let hidden = vec![1.0f32; hidden_dim];
         let weights = BlockWeights::test_no_bias(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
         );
 
         // SwiGLU
@@ -265,8 +471,16 @@ mod tests {
         assert_eq!(out_gelu.len(), hidden_dim);
 
         // All three should produce different outputs
-        let diff_sg: f32 = out_swiglu.iter().zip(out_geglu.iter()).map(|(a, b)| (a - b).abs()).sum();
-        let diff_sg2: f32 = out_swiglu.iter().zip(out_gelu.iter()).map(|(a, b)| (a - b).abs()).sum();
+        let diff_sg: f32 = out_swiglu
+            .iter()
+            .zip(out_geglu.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        let diff_sg2: f32 = out_swiglu
+            .iter()
+            .zip(out_gelu.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
         assert!(diff_sg > 1e-6, "SwiGLU and GeGLU should differ");
         assert!(diff_sg2 > 1e-6, "SwiGLU and GELU should differ");
     }

@@ -110,14 +110,18 @@ fn validate_binary_f32(
     output: &[bool],
 ) -> nnx_core::error::Result<()> {
     if a.len() != b.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("{fn_name}: a.len()={} != b.len()={}", a.len(), b.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "{fn_name}: a.len()={} != b.len()={}",
+            a.len(),
+            b.len()
+        )));
     }
     if a.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("{fn_name}: a.len()={} != output.len()={}", a.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "{fn_name}: a.len()={} != output.len()={}",
+            a.len(),
+            output.len()
+        )));
     }
     Ok(())
 }
@@ -130,7 +134,11 @@ pub fn equal_f32_checked(a: &[f32], b: &[f32], output: &mut [bool]) -> nnx_core:
 }
 
 /// Checked version of `greater_f32`.
-pub fn greater_f32_checked(a: &[f32], b: &[f32], output: &mut [bool]) -> nnx_core::error::Result<()> {
+pub fn greater_f32_checked(
+    a: &[f32],
+    b: &[f32],
+    output: &mut [bool],
+) -> nnx_core::error::Result<()> {
     validate_binary_f32("greater", a, b, output)?;
     greater_f32(a, b, output);
     Ok(())
@@ -144,7 +152,11 @@ pub fn less_f32_checked(a: &[f32], b: &[f32], output: &mut [bool]) -> nnx_core::
 }
 
 /// Checked version of `not_equal_f32`.
-pub fn not_equal_f32_checked(a: &[f32], b: &[f32], output: &mut [bool]) -> nnx_core::error::Result<()> {
+pub fn not_equal_f32_checked(
+    a: &[f32],
+    b: &[f32],
+    output: &mut [bool],
+) -> nnx_core::error::Result<()> {
     validate_binary_f32("not_equal", a, b, output)?;
     not_equal_f32(a, b, output);
     Ok(())

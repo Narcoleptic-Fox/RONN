@@ -60,21 +60,27 @@ pub fn upsample_nearest_2d_f32_checked(
     let expected_in = batch_size * channels * h_in * w_in;
     let expected_out = batch_size * channels * h_out * w_out;
     if input.len() != expected_in {
-        return Err(EngineError::ShapeMismatch(
-            format!("upsample_nearest_2d: input.len()={} but expected {}", input.len(), expected_in)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "upsample_nearest_2d: input.len()={} but expected {}",
+            input.len(),
+            expected_in
+        )));
     }
     if output.len() != expected_out {
-        return Err(EngineError::ShapeMismatch(
-            format!("upsample_nearest_2d: output.len()={} but expected {}", output.len(), expected_out)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "upsample_nearest_2d: output.len()={} but expected {}",
+            output.len(),
+            expected_out
+        )));
     }
     if h_in == 0 || w_in == 0 {
         return Err(EngineError::ShapeMismatch(
-            "upsample_nearest_2d: input spatial dims must be non-zero".to_string()
+            "upsample_nearest_2d: input spatial dims must be non-zero".to_string(),
         ));
     }
-    upsample_nearest_2d_f32(input, output, batch_size, channels, h_in, w_in, h_out, w_out);
+    upsample_nearest_2d_f32(
+        input, output, batch_size, channels, h_in, w_in, h_out, w_out,
+    );
     Ok(())
 }
 
@@ -153,21 +159,27 @@ pub fn upsample_bilinear_2d_f32_checked(
     let expected_in = batch_size * channels * h_in * w_in;
     let expected_out = batch_size * channels * h_out * w_out;
     if input.len() != expected_in {
-        return Err(EngineError::ShapeMismatch(
-            format!("upsample_bilinear_2d: input.len()={} but expected {}", input.len(), expected_in)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "upsample_bilinear_2d: input.len()={} but expected {}",
+            input.len(),
+            expected_in
+        )));
     }
     if output.len() != expected_out {
-        return Err(EngineError::ShapeMismatch(
-            format!("upsample_bilinear_2d: output.len()={} but expected {}", output.len(), expected_out)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "upsample_bilinear_2d: output.len()={} but expected {}",
+            output.len(),
+            expected_out
+        )));
     }
     if h_in == 0 || w_in == 0 {
         return Err(EngineError::ShapeMismatch(
-            "upsample_bilinear_2d: input spatial dims must be non-zero".to_string()
+            "upsample_bilinear_2d: input spatial dims must be non-zero".to_string(),
         ));
     }
-    upsample_bilinear_2d_f32(input, output, batch_size, channels, h_in, w_in, h_out, w_out);
+    upsample_bilinear_2d_f32(
+        input, output, batch_size, channels, h_in, w_in, h_out, w_out,
+    );
     Ok(())
 }
 
@@ -214,18 +226,22 @@ pub fn upsample_nearest_1d_f32_checked(
     let expected_in = batch_size * channels * l_in;
     let expected_out = batch_size * channels * l_out;
     if input.len() != expected_in {
-        return Err(EngineError::ShapeMismatch(
-            format!("upsample_nearest_1d: input.len()={} but expected {}", input.len(), expected_in)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "upsample_nearest_1d: input.len()={} but expected {}",
+            input.len(),
+            expected_in
+        )));
     }
     if output.len() != expected_out {
-        return Err(EngineError::ShapeMismatch(
-            format!("upsample_nearest_1d: output.len()={} but expected {}", output.len(), expected_out)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "upsample_nearest_1d: output.len()={} but expected {}",
+            output.len(),
+            expected_out
+        )));
     }
     if l_in == 0 {
         return Err(EngineError::ShapeMismatch(
-            "upsample_nearest_1d: l_in must be non-zero".to_string()
+            "upsample_nearest_1d: l_in must be non-zero".to_string(),
         ));
     }
     upsample_nearest_1d_f32(input, output, batch_size, channels, l_in, l_out);

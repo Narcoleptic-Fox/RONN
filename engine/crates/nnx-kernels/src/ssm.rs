@@ -79,34 +79,46 @@ pub fn selective_scan_f32_checked(
     let expected_u = seq_len * d_inner;
     let expected_abc = seq_len * d_inner * d_state;
     if u.len() != expected_u {
-        return Err(EngineError::ShapeMismatch(
-            format!("selective_scan: u.len()={} but seq_len*d_inner={}", u.len(), expected_u)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "selective_scan: u.len()={} but seq_len*d_inner={}",
+            u.len(),
+            expected_u
+        )));
     }
     if a_bar.len() != expected_abc {
-        return Err(EngineError::ShapeMismatch(
-            format!("selective_scan: a_bar.len()={} but expected {}", a_bar.len(), expected_abc)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "selective_scan: a_bar.len()={} but expected {}",
+            a_bar.len(),
+            expected_abc
+        )));
     }
     if b_bar.len() != expected_abc {
-        return Err(EngineError::ShapeMismatch(
-            format!("selective_scan: b_bar.len()={} but expected {}", b_bar.len(), expected_abc)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "selective_scan: b_bar.len()={} but expected {}",
+            b_bar.len(),
+            expected_abc
+        )));
     }
     if c.len() != expected_abc {
-        return Err(EngineError::ShapeMismatch(
-            format!("selective_scan: c.len()={} but expected {}", c.len(), expected_abc)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "selective_scan: c.len()={} but expected {}",
+            c.len(),
+            expected_abc
+        )));
     }
     if d.len() != d_inner {
-        return Err(EngineError::ShapeMismatch(
-            format!("selective_scan: d.len()={} but d_inner={}", d.len(), d_inner)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "selective_scan: d.len()={} but d_inner={}",
+            d.len(),
+            d_inner
+        )));
     }
     if output.len() != expected_u {
-        return Err(EngineError::ShapeMismatch(
-            format!("selective_scan: output.len()={} but seq_len*d_inner={}", output.len(), expected_u)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "selective_scan: output.len()={} but seq_len*d_inner={}",
+            output.len(),
+            expected_u
+        )));
     }
     selective_scan_f32(u, a_bar, b_bar, c, d, output, seq_len, d_inner, d_state);
     Ok(())
@@ -167,25 +179,33 @@ pub fn causal_conv1d_f32_checked(
     kernel_size: usize,
 ) -> nnx_core::error::Result<()> {
     if input.len() != seq_len * d_inner {
-        return Err(EngineError::ShapeMismatch(
-            format!("causal_conv1d: input.len()={} but seq_len*d_inner={}", input.len(), seq_len * d_inner)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "causal_conv1d: input.len()={} but seq_len*d_inner={}",
+            input.len(),
+            seq_len * d_inner
+        )));
     }
     if weight.len() != d_inner * kernel_size {
-        return Err(EngineError::ShapeMismatch(
-            format!("causal_conv1d: weight.len()={} but d_inner*kernel_size={}", weight.len(), d_inner * kernel_size)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "causal_conv1d: weight.len()={} but d_inner*kernel_size={}",
+            weight.len(),
+            d_inner * kernel_size
+        )));
     }
     if output.len() != seq_len * d_inner {
-        return Err(EngineError::ShapeMismatch(
-            format!("causal_conv1d: output.len()={} but seq_len*d_inner={}", output.len(), seq_len * d_inner)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "causal_conv1d: output.len()={} but seq_len*d_inner={}",
+            output.len(),
+            seq_len * d_inner
+        )));
     }
     if let Some(b) = bias {
         if b.len() != d_inner {
-            return Err(EngineError::ShapeMismatch(
-                format!("causal_conv1d: bias.len()={} but d_inner={}", b.len(), d_inner)
-            ));
+            return Err(EngineError::ShapeMismatch(format!(
+                "causal_conv1d: bias.len()={} but d_inner={}",
+                b.len(),
+                d_inner
+            )));
         }
     }
     causal_conv1d_f32(input, weight, bias, output, seq_len, d_inner, kernel_size);
@@ -247,29 +267,39 @@ pub fn discretize_ssm_f32_checked(
     let expected_b = seq_len * d_inner * d_state;
     let expected_delta = seq_len * d_inner;
     if a.len() != expected_a {
-        return Err(EngineError::ShapeMismatch(
-            format!("discretize_ssm: a.len()={} but d_inner*d_state={}", a.len(), expected_a)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "discretize_ssm: a.len()={} but d_inner*d_state={}",
+            a.len(),
+            expected_a
+        )));
     }
     if b.len() != expected_b {
-        return Err(EngineError::ShapeMismatch(
-            format!("discretize_ssm: b.len()={} but expected {}", b.len(), expected_b)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "discretize_ssm: b.len()={} but expected {}",
+            b.len(),
+            expected_b
+        )));
     }
     if delta.len() != expected_delta {
-        return Err(EngineError::ShapeMismatch(
-            format!("discretize_ssm: delta.len()={} but seq_len*d_inner={}", delta.len(), expected_delta)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "discretize_ssm: delta.len()={} but seq_len*d_inner={}",
+            delta.len(),
+            expected_delta
+        )));
     }
     if a_bar.len() != expected_b {
-        return Err(EngineError::ShapeMismatch(
-            format!("discretize_ssm: a_bar.len()={} but expected {}", a_bar.len(), expected_b)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "discretize_ssm: a_bar.len()={} but expected {}",
+            a_bar.len(),
+            expected_b
+        )));
     }
     if b_bar.len() != expected_b {
-        return Err(EngineError::ShapeMismatch(
-            format!("discretize_ssm: b_bar.len()={} but expected {}", b_bar.len(), expected_b)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "discretize_ssm: b_bar.len()={} but expected {}",
+            b_bar.len(),
+            expected_b
+        )));
     }
     discretize_ssm_f32(a, b, delta, a_bar, b_bar, seq_len, d_inner, d_state);
     Ok(())
@@ -292,7 +322,17 @@ mod tests {
         let d = [1.0, 1.0f32];
         let mut output = vec![0.0f32; seq_len * d_inner];
 
-        selective_scan_f32(&u, &a_bar, &b_bar, &c, &d, &mut output, seq_len, d_inner, d_state);
+        selective_scan_f32(
+            &u,
+            &a_bar,
+            &b_bar,
+            &c,
+            &d,
+            &mut output,
+            seq_len,
+            d_inner,
+            d_state,
+        );
         assert_eq!(output, u);
     }
 
@@ -352,7 +392,9 @@ mod tests {
         let mut a_bar = [0.0f32; 2];
         let mut b_bar = [0.0f32; 2];
 
-        discretize_ssm_f32(&a, &b, &delta, &mut a_bar, &mut b_bar, seq_len, d_inner, d_state);
+        discretize_ssm_f32(
+            &a, &b, &delta, &mut a_bar, &mut b_bar, seq_len, d_inner, d_state,
+        );
 
         assert!((a_bar[0] - (-0.1f32).exp()).abs() < 1e-5);
         assert!((b_bar[0] - 0.1).abs() < 1e-5);

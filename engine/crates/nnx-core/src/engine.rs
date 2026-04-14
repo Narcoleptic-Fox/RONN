@@ -7,6 +7,7 @@
 //! KV cache, and read model metadata.
 
 use crate::device::Device;
+use crate::error::EngineError;
 use crate::error::Result;
 use crate::shape::Shape;
 use crate::tensor::Tensor;
@@ -15,6 +16,10 @@ use std::path::Path;
 /// Opaque handle to a loaded model. The engine decides what this contains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModelHandle(pub u64);
+
+/// Opaque handle to a request/session scoped KV cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RequestHandle(pub u64);
 
 /// Configuration for model loading.
 #[derive(Debug, Clone)]
@@ -34,7 +39,7 @@ impl Default for LoadConfig {
         Self {
             device: Device::Cpu,
             memory_budget: 0,
-            num_threads: 0, // auto-detect
+            num_threads: 0,    // auto-detect
             context_length: 0, // model default
         }
     }
@@ -50,6 +55,22 @@ pub struct TokenBatch {
 }
 
 impl TokenBatch {
+    /// Create a batch with explicit starting positions.
+    pub fn new(token_ids: Vec<Vec<u32>>, positions: Vec<usize>) -> Result<Self> {
+        if token_ids.len() != positions.len() {
+            return Err(EngineError::ShapeMismatch(format!(
+                "TokenBatch positions length {} does not match batch size {}",
+                positions.len(),
+                token_ids.len()
+            )));
+        }
+
+        Ok(Self {
+            token_ids,
+            positions,
+        })
+    }
+
     /// Create a batch with a single sequence.
     pub fn single(tokens: Vec<u32>, position: usize) -> Self {
         Self {
@@ -131,11 +152,17 @@ pub trait InferenceEngine: Send + Sync {
     /// Load a model from a file path.
     fn load_model(&self, path: &Path, config: &LoadConfig) -> Result<ModelHandle>;
 
+    /// Create a new request/session for a loaded model.
+    fn create_request(&self, handle: ModelHandle) -> Result<RequestHandle>;
+
+    /// Drop a request/session and free its KV cache.
+    fn drop_request(&self, handle: RequestHandle) -> Result<()>;
+
     /// Unload a model and free its resources.
     fn unload_model(&self, handle: ModelHandle) -> Result<()>;
 
     /// Run a full forward pass, returning logits.
-    fn forward(&self, handle: ModelHandle, input: &TokenBatch) -> Result<GenerationOutput>;
+    fn forward(&self, handle: RequestHandle, input: &TokenBatch) -> Result<GenerationOutput>;
 
     /// Run a partial forward pass over a subset of layers.
     ///
@@ -143,7 +170,7 @@ pub trait InferenceEngine: Send + Sync {
     /// `start_layer` is inclusive, `end_layer` is exclusive.
     fn forward_layers(
         &self,
-        handle: ModelHandle,
+        handle: RequestHandle,
         input: &Tensor,
         start_layer: usize,
         end_layer: usize,
@@ -153,22 +180,39 @@ pub trait InferenceEngine: Send + Sync {
     fn model_info(&self, handle: ModelHandle) -> Result<ModelInfo>;
 
     /// Get the current number of cached tokens.
-    fn cache_tokens(&self, handle: ModelHandle) -> Result<usize>;
+    fn cache_tokens(&self, handle: RequestHandle) -> Result<usize>;
 
     /// Get the cache capacity in tokens.
-    fn cache_capacity(&self, handle: ModelHandle) -> Result<usize>;
+    fn cache_capacity(&self, handle: RequestHandle) -> Result<usize>;
 
     /// Get cache memory usage in bytes.
-    fn cache_memory_bytes(&self, handle: ModelHandle) -> Result<usize>;
+    fn cache_memory_bytes(&self, handle: RequestHandle) -> Result<usize>;
 
     /// Clear the KV cache (start new conversation).
-    fn cache_clear(&self, handle: ModelHandle) -> Result<()>;
+    fn cache_clear(&self, handle: RequestHandle) -> Result<()>;
 
     /// Truncate the cache to keep only the first `n` tokens.
-    fn cache_truncate(&self, handle: ModelHandle, n: usize) -> Result<()>;
+    fn cache_truncate(&self, handle: RequestHandle, n: usize) -> Result<()>;
 
     /// Extract intermediate layer features during the next forward pass.
     ///
     /// Used by EAGLE-style speculative decoding to tap into target model layers.
-    fn request_layer_features(&self, handle: ModelHandle, layer_indices: &[usize]) -> Result<()>;
+    fn request_layer_features(&self, handle: RequestHandle, layer_indices: &[usize]) -> Result<()>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_batch_new_accepts_matching_positions() {
+        let batch = TokenBatch::new(vec![vec![1, 2], vec![3]], vec![0, 2]).unwrap();
+        assert_eq!(batch.batch_size(), 2);
+    }
+
+    #[test]
+    fn token_batch_new_rejects_mismatched_positions() {
+        let batch = TokenBatch::new(vec![vec![1, 2], vec![3]], vec![0]);
+        assert!(batch.is_err());
+    }
 }

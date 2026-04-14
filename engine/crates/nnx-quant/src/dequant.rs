@@ -44,8 +44,8 @@ pub fn dequantize_q4_k(block: &BlockQ4K, output: &mut [f32; 256]) {
     // Dequantize: 128 bytes hold 256 nibbles
     // First 128 values come from low nibbles, next 128 from high nibbles
     for j in 0..128 {
-        let sub_lo = j / 32;         // sub-block for low-nibble half
-        let sub_hi = sub_lo + 4;     // sub-block for high-nibble half
+        let sub_lo = j / 32; // sub-block for low-nibble half
+        let sub_hi = sub_lo + 4; // sub-block for high-nibble half
         let lo_nibble = (block.quants[j] & 0x0F) as f32;
         let hi_nibble = ((block.quants[j] >> 4) & 0x0F) as f32;
         output[j] = d * sc[sub_lo] as f32 * lo_nibble - dmin * mn[sub_lo] as f32;
@@ -145,7 +145,10 @@ pub fn dequantize(data: &[u8], dtype: GGMLType, output: &mut [f32]) -> usize {
             let count = (data.len() / 4).min(output.len());
             for i in 0..count {
                 output[i] = f32::from_le_bytes([
-                    data[i * 4], data[i * 4 + 1], data[i * 4 + 2], data[i * 4 + 3],
+                    data[i * 4],
+                    data[i * 4 + 1],
+                    data[i * 4 + 2],
+                    data[i * 4 + 3],
                 ]);
             }
             count
@@ -178,12 +181,24 @@ fn dequant_blocks<B: Copy, const N: usize>(
     let num_blocks = data.len() / block_bytes;
     let mut written = 0;
     for b in 0..num_blocks {
-        if written + N > output.len() { break; }
+        if written >= output.len() {
+            break;
+        }
         let offset = b * block_bytes;
         let block = unsafe { &*(data[offset..].as_ptr() as *const B) };
-        let out: &mut [f32; N] = (&mut output[written..written + N]).try_into().unwrap();
-        dequant_fn(block, out);
-        written += N;
+        let remaining = output.len() - written;
+
+        if remaining >= N {
+            let out: &mut [f32; N] = (&mut output[written..written + N]).try_into().unwrap();
+            dequant_fn(block, out);
+            written += N;
+        } else {
+            let mut tmp = [0.0f32; N];
+            dequant_fn(block, &mut tmp);
+            output[written..].copy_from_slice(&tmp[..remaining]);
+            written += remaining;
+            break;
+        }
     }
     written
 }
@@ -213,11 +228,18 @@ mod tests {
     #[test]
     fn test_dequant_q8_0_identity() {
         let mut quants = [0i8; 32];
-        for i in 0..32 { quants[i] = i as i8; }
-        let block = BlockQ8_0 { scale: half::f16::from_f32(1.0), quants };
+        for i in 0..32 {
+            quants[i] = i as i8;
+        }
+        let block = BlockQ8_0 {
+            scale: half::f16::from_f32(1.0),
+            quants,
+        };
         let mut output = [0.0f32; 32];
         dequantize_q8_0(&block, &mut output);
-        for i in 0..32 { assert!((output[i] - i as f32).abs() < 0.01); }
+        for i in 0..32 {
+            assert!((output[i] - i as f32).abs() < 0.01);
+        }
     }
 
     #[test]
@@ -259,7 +281,10 @@ mod tests {
 
     #[test]
     fn test_dequant_f32_passthrough() {
-        let input: Vec<u8> = [1.0f32, 2.0, 3.0].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let input: Vec<u8> = [1.0f32, 2.0, 3.0]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
         let mut output = [0.0f32; 3];
         let n = dequantize(&input, GGMLType::F32, &mut output);
         assert_eq!(n, 3);
@@ -271,5 +296,29 @@ mod tests {
         let input: Vec<u8> = [1.0f32, 2.0].iter().flat_map(|v| v.to_le_bytes()).collect();
         let output = dequantize_alloc(&input, GGMLType::F32, 2);
         assert_eq!(output, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn test_dequant_partial_block_tail() {
+        let mut quants = [0i8; 32];
+        quants[0] = 3;
+        quants[1] = 4;
+        quants[2] = 5;
+        quants[3] = 6;
+
+        let block = BlockQ8_0 {
+            scale: half::f16::from_f32(1.0),
+            quants,
+        };
+
+        let mut input = Vec::new();
+        input.extend_from_slice(&block.scale.to_bits().to_le_bytes());
+        input.extend(block.quants.iter().map(|v| *v as u8));
+
+        let mut output = [0.0f32; 4];
+        let written = dequantize(&input, GGMLType::Q8_0, &mut output);
+
+        assert_eq!(written, 4);
+        assert_eq!(output, [3.0, 4.0, 5.0, 6.0]);
     }
 }

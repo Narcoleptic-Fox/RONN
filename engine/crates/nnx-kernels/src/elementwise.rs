@@ -8,95 +8,125 @@ use nnx_core::error::EngineError;
 pub fn add_f32(a: &[f32], b: &[f32], output: &mut [f32]) {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), output.len());
-    for i in 0..a.len() { output[i] = a[i] + b[i]; }
+    for i in 0..a.len() {
+        output[i] = a[i] + b[i];
+    }
 }
 
 /// Element-wise subtract: output = a - b
 pub fn sub_f32(a: &[f32], b: &[f32], output: &mut [f32]) {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), output.len());
-    for i in 0..a.len() { output[i] = a[i] - b[i]; }
+    for i in 0..a.len() {
+        output[i] = a[i] - b[i];
+    }
 }
 
 /// Element-wise multiply: output = a * b
 pub fn mul_f32(a: &[f32], b: &[f32], output: &mut [f32]) {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), output.len());
-    for i in 0..a.len() { output[i] = a[i] * b[i]; }
+    for i in 0..a.len() {
+        output[i] = a[i] * b[i];
+    }
 }
 
 /// Element-wise divide: output = a / b
 pub fn div_f32(a: &[f32], b: &[f32], output: &mut [f32]) {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), output.len());
-    for i in 0..a.len() { output[i] = a[i] / b[i]; }
+    for i in 0..a.len() {
+        output[i] = a[i] / b[i];
+    }
 }
 
 /// Negate: output = -x
 pub fn neg_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = -x[i]; }
+    for i in 0..x.len() {
+        output[i] = -x[i];
+    }
 }
 
 /// Absolute value
 pub fn abs_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].abs(); }
+    for i in 0..x.len() {
+        output[i] = x[i].abs();
+    }
 }
 
 /// Square root
 pub fn sqrt_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].sqrt(); }
+    for i in 0..x.len() {
+        output[i] = x[i].sqrt();
+    }
 }
 
 /// Exponential
 pub fn exp_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].exp(); }
+    for i in 0..x.len() {
+        output[i] = x[i].exp();
+    }
 }
 
 /// Natural log
 pub fn log_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].ln(); }
+    for i in 0..x.len() {
+        output[i] = x[i].ln();
+    }
 }
 
 /// Power: output = base^exp (element-wise)
 pub fn pow_f32(base: &[f32], exp: &[f32], output: &mut [f32]) {
     assert_eq!(base.len(), exp.len());
     assert_eq!(base.len(), output.len());
-    for i in 0..base.len() { output[i] = base[i].powf(exp[i]); }
+    for i in 0..base.len() {
+        output[i] = base[i].powf(exp[i]);
+    }
 }
 
 /// Scalar power: output = x^p
 pub fn pow_scalar_f32(x: &[f32], p: f32, output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].powf(p); }
+    for i in 0..x.len() {
+        output[i] = x[i].powf(p);
+    }
 }
 
 /// Floor
 pub fn floor_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].floor(); }
+    for i in 0..x.len() {
+        output[i] = x[i].floor();
+    }
 }
 
 /// Ceil
 pub fn ceil_f32(x: &[f32], output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i].ceil(); }
+    for i in 0..x.len() {
+        output[i] = x[i].ceil();
+    }
 }
 
 /// Scalar add: output = x + s
 pub fn add_scalar_f32(x: &[f32], s: f32, output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i] + s; }
+    for i in 0..x.len() {
+        output[i] = x[i] + s;
+    }
 }
 
 /// Scalar multiply: output = x * s
 pub fn mul_scalar_f32(x: &[f32], s: f32, output: &mut [f32]) {
     assert_eq!(x.len(), output.len());
-    for i in 0..x.len() { output[i] = x[i] * s; }
+    for i in 0..x.len() {
+        output[i] = x[i] * s;
+    }
 }
 
 /// Where/Select: output[i] = if cond[i] { a[i] } else { b[i] }
@@ -104,36 +134,49 @@ pub fn where_f32(cond: &[bool], a: &[f32], b: &[f32], output: &mut [f32]) {
     assert_eq!(cond.len(), a.len());
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len(), output.len());
-    for i in 0..a.len() { output[i] = if cond[i] { a[i] } else { b[i] }; }
+    for i in 0..a.len() {
+        output[i] = if cond[i] { a[i] } else { b[i] };
+    }
 }
 
 // -- Checked wrappers --
 
 /// Helper to validate binary element-wise op arguments.
 fn validate_binary_elementwise(
-    fn_name: &str, a: &[f32], b: &[f32], output: &[f32],
+    fn_name: &str,
+    a: &[f32],
+    b: &[f32],
+    output: &[f32],
 ) -> nnx_core::error::Result<()> {
     if a.len() != b.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("{fn_name}: a.len()={} != b.len()={}", a.len(), b.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "{fn_name}: a.len()={} != b.len()={}",
+            a.len(),
+            b.len()
+        )));
     }
     if a.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("{fn_name}: a.len()={} != output.len()={}", a.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "{fn_name}: a.len()={} != output.len()={}",
+            a.len(),
+            output.len()
+        )));
     }
     Ok(())
 }
 
 /// Helper to validate unary element-wise op arguments.
 fn validate_unary_elementwise(
-    fn_name: &str, x: &[f32], output: &[f32],
+    fn_name: &str,
+    x: &[f32],
+    output: &[f32],
 ) -> nnx_core::error::Result<()> {
     if x.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("{fn_name}: x.len()={} != output.len()={}", x.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "{fn_name}: x.len()={} != output.len()={}",
+            x.len(),
+            output.len()
+        )));
     }
     Ok(())
 }
@@ -196,22 +239,31 @@ pub fn log_f32_checked(x: &[f32], output: &mut [f32]) -> nnx_core::error::Result
 
 /// Checked version of `where_f32`.
 pub fn where_f32_checked(
-    cond: &[bool], a: &[f32], b: &[f32], output: &mut [f32],
+    cond: &[bool],
+    a: &[f32],
+    b: &[f32],
+    output: &mut [f32],
 ) -> nnx_core::error::Result<()> {
     if cond.len() != a.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("where: cond.len()={} != a.len()={}", cond.len(), a.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "where: cond.len()={} != a.len()={}",
+            cond.len(),
+            a.len()
+        )));
     }
     if a.len() != b.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("where: a.len()={} != b.len()={}", a.len(), b.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "where: a.len()={} != b.len()={}",
+            a.len(),
+            b.len()
+        )));
     }
     if a.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("where: a.len()={} != output.len()={}", a.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "where: a.len()={} != output.len()={}",
+            a.len(),
+            output.len()
+        )));
     }
     where_f32(cond, a, b, output);
     Ok(())
@@ -237,7 +289,9 @@ mod tests {
         assert_eq!(out, [4.0, 10.0, 18.0]);
 
         div_f32(&a, &b, &mut out);
-        for i in 0..3 { assert!((out[i] - a[i] / b[i]).abs() < 1e-6); }
+        for i in 0..3 {
+            assert!((out[i] - a[i] / b[i]).abs() < 1e-6);
+        }
     }
 
     #[test]

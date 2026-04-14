@@ -33,14 +33,14 @@ pub fn layer_norm_f32(
         let mean: f32 = group.iter().sum::<f32>() / norm_size as f32;
 
         // Compute variance
-        let var: f32 = group.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / norm_size as f32;
+        let var: f32 =
+            group.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / norm_size as f32;
 
         let inv_std = 1.0 / (var + eps).sqrt();
 
         for i in 0..norm_size {
             let normalized = (group[i] - mean) * inv_std;
-            output[start + i] = normalized * weight[i]
-                + bias.map_or(0.0, |b| b[i]);
+            output[start + i] = normalized * weight[i] + bias.map_or(0.0, |b| b[i]);
         }
     }
 }
@@ -92,30 +92,38 @@ pub fn layer_norm_f32_checked(
     eps: f32,
 ) -> nnx_core::error::Result<()> {
     if x.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("layer_norm: x.len()={} != output.len()={}", x.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "layer_norm: x.len()={} != output.len()={}",
+            x.len(),
+            output.len()
+        )));
     }
     if weight.len() != norm_size {
-        return Err(EngineError::ShapeMismatch(
-            format!("layer_norm: weight.len()={} != norm_size={}", weight.len(), norm_size)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "layer_norm: weight.len()={} != norm_size={}",
+            weight.len(),
+            norm_size
+        )));
     }
     if norm_size == 0 {
         return Err(EngineError::ShapeMismatch(
-            "layer_norm: norm_size must be non-zero".to_string()
+            "layer_norm: norm_size must be non-zero".to_string(),
         ));
     }
     if x.len() % norm_size != 0 {
-        return Err(EngineError::ShapeMismatch(
-            format!("layer_norm: x.len()={} is not divisible by norm_size={}", x.len(), norm_size)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "layer_norm: x.len()={} is not divisible by norm_size={}",
+            x.len(),
+            norm_size
+        )));
     }
     if let Some(b) = bias {
         if b.len() != norm_size {
-            return Err(EngineError::ShapeMismatch(
-                format!("layer_norm: bias.len()={} != norm_size={}", b.len(), norm_size)
-            ));
+            return Err(EngineError::ShapeMismatch(format!(
+                "layer_norm: bias.len()={} != norm_size={}",
+                b.len(),
+                norm_size
+            )));
         }
     }
     layer_norm_f32(x, weight, bias, output, norm_size, eps);
@@ -135,41 +143,63 @@ pub fn batch_norm_f32_checked(
     eps: f32,
 ) -> nnx_core::error::Result<()> {
     if x.len() != output.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("batch_norm: x.len()={} != output.len()={}", x.len(), output.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "batch_norm: x.len()={} != output.len()={}",
+            x.len(),
+            output.len()
+        )));
     }
     if scale.len() != num_channels {
-        return Err(EngineError::ShapeMismatch(
-            format!("batch_norm: scale.len()={} != num_channels={}", scale.len(), num_channels)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "batch_norm: scale.len()={} != num_channels={}",
+            scale.len(),
+            num_channels
+        )));
     }
     if bias.len() != num_channels {
-        return Err(EngineError::ShapeMismatch(
-            format!("batch_norm: bias.len()={} != num_channels={}", bias.len(), num_channels)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "batch_norm: bias.len()={} != num_channels={}",
+            bias.len(),
+            num_channels
+        )));
     }
     if running_mean.len() != num_channels {
-        return Err(EngineError::ShapeMismatch(
-            format!("batch_norm: running_mean.len()={} != num_channels={}", running_mean.len(), num_channels)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "batch_norm: running_mean.len()={} != num_channels={}",
+            running_mean.len(),
+            num_channels
+        )));
     }
     if running_var.len() != num_channels {
-        return Err(EngineError::ShapeMismatch(
-            format!("batch_norm: running_var.len()={} != num_channels={}", running_var.len(), num_channels)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "batch_norm: running_var.len()={} != num_channels={}",
+            running_var.len(),
+            num_channels
+        )));
     }
     if num_channels == 0 || spatial_size == 0 {
         return Err(EngineError::ShapeMismatch(
-            "batch_norm: num_channels and spatial_size must be non-zero".to_string()
+            "batch_norm: num_channels and spatial_size must be non-zero".to_string(),
         ));
     }
     if x.len() % (num_channels * spatial_size) != 0 {
-        return Err(EngineError::ShapeMismatch(
-            format!("batch_norm: x.len()={} not divisible by num_channels*spatial_size={}", x.len(), num_channels * spatial_size)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "batch_norm: x.len()={} not divisible by num_channels*spatial_size={}",
+            x.len(),
+            num_channels * spatial_size
+        )));
     }
-    batch_norm_f32(x, scale, bias, running_mean, running_var, output, num_channels, spatial_size, eps);
+    batch_norm_f32(
+        x,
+        scale,
+        bias,
+        running_mean,
+        running_var,
+        output,
+        num_channels,
+        spatial_size,
+        eps,
+    );
     Ok(())
 }
 

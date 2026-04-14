@@ -22,8 +22,8 @@ pub fn gather_f32(
     input: &[f32],
     indices: &[usize],
     output: &mut [f32],
-    axis_size: usize,    // size of the axis being gathered from
-    inner_size: usize,   // product of dimensions after the axis
+    axis_size: usize,  // size of the axis being gathered from
+    inner_size: usize, // product of dimensions after the axis
 ) {
     for (i, &idx) in indices.iter().enumerate() {
         let src_offset = idx * inner_size;
@@ -49,7 +49,8 @@ pub fn concat_inner_f32(
         let b_start = i * inner_b;
         let o_start = i * inner_out;
         output[o_start..o_start + inner_a].copy_from_slice(&a[a_start..a_start + inner_a]);
-        output[o_start + inner_a..o_start + inner_out].copy_from_slice(&b[b_start..b_start + inner_b]);
+        output[o_start + inner_a..o_start + inner_out]
+            .copy_from_slice(&b[b_start..b_start + inner_b]);
     }
 }
 
@@ -82,12 +83,7 @@ pub fn repeat_f32(input: &[f32], output: &mut [f32], repeats: usize) {
 /// Embedding lookup: output = weight[indices]
 /// weight: [vocab_size, embed_dim], indices: [seq_len]
 /// output: [seq_len, embed_dim]
-pub fn embedding_f32(
-    weight: &[f32],
-    indices: &[u32],
-    output: &mut [f32],
-    embed_dim: usize,
-) {
+pub fn embedding_f32(weight: &[f32], indices: &[u32], output: &mut [f32], embed_dim: usize) {
     for (i, &idx) in indices.iter().enumerate() {
         let src = idx as usize * embed_dim;
         let dst = i * embed_dim;
@@ -99,18 +95,25 @@ pub fn embedding_f32(
 
 /// Checked version of `transpose_2d_f32`.
 pub fn transpose_2d_f32_checked(
-    input: &[f32], output: &mut [f32], rows: usize, cols: usize,
+    input: &[f32],
+    output: &mut [f32],
+    rows: usize,
+    cols: usize,
 ) -> nnx_core::error::Result<()> {
     let expected = rows * cols;
     if input.len() != expected {
-        return Err(EngineError::ShapeMismatch(
-            format!("transpose_2d: input.len()={} but rows*cols={}", input.len(), expected)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "transpose_2d: input.len()={} but rows*cols={}",
+            input.len(),
+            expected
+        )));
     }
     if output.len() != expected {
-        return Err(EngineError::ShapeMismatch(
-            format!("transpose_2d: output.len()={} but rows*cols={}", output.len(), expected)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "transpose_2d: output.len()={} but rows*cols={}",
+            output.len(),
+            expected
+        )));
     }
     transpose_2d_f32(input, output, rows, cols);
     Ok(())
@@ -118,23 +121,31 @@ pub fn transpose_2d_f32_checked(
 
 /// Checked version of `slice_1d_f32`.
 pub fn slice_1d_f32_checked(
-    input: &[f32], output: &mut [f32], start: usize, end: usize,
+    input: &[f32],
+    output: &mut [f32],
+    start: usize,
+    end: usize,
 ) -> nnx_core::error::Result<()> {
     if end < start {
-        return Err(EngineError::ShapeMismatch(
-            format!("slice_1d: end={} < start={}", end, start)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "slice_1d: end={} < start={}",
+            end, start
+        )));
     }
     if end > input.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("slice_1d: end={} > input.len()={}", end, input.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "slice_1d: end={} > input.len()={}",
+            end,
+            input.len()
+        )));
     }
     let len = end - start;
     if output.len() != len {
-        return Err(EngineError::ShapeMismatch(
-            format!("slice_1d: output.len()={} but slice len={}", output.len(), len)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "slice_1d: output.len()={} but slice len={}",
+            output.len(),
+            len
+        )));
     }
     slice_1d_f32(input, output, start, end);
     Ok(())
@@ -142,13 +153,18 @@ pub fn slice_1d_f32_checked(
 
 /// Checked version of `pad_1d_f32`.
 pub fn pad_1d_f32_checked(
-    input: &[f32], output: &mut [f32], pad_before: usize, pad_after: usize,
+    input: &[f32],
+    output: &mut [f32],
+    pad_before: usize,
+    pad_after: usize,
 ) -> nnx_core::error::Result<()> {
     let expected = input.len() + pad_before + pad_after;
     if output.len() != expected {
-        return Err(EngineError::ShapeMismatch(
-            format!("pad_1d: output.len()={} but expected {}", output.len(), expected)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "pad_1d: output.len()={} but expected {}",
+            output.len(),
+            expected
+        )));
     }
     pad_1d_f32(input, output, pad_before, pad_after);
     Ok(())
@@ -156,12 +172,16 @@ pub fn pad_1d_f32_checked(
 
 /// Checked version of `repeat_f32`.
 pub fn repeat_f32_checked(
-    input: &[f32], output: &mut [f32], repeats: usize,
+    input: &[f32],
+    output: &mut [f32],
+    repeats: usize,
 ) -> nnx_core::error::Result<()> {
     if output.len() != input.len() * repeats {
-        return Err(EngineError::ShapeMismatch(
-            format!("repeat: output.len()={} but input.len()*repeats={}", output.len(), input.len() * repeats)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "repeat: output.len()={} but input.len()*repeats={}",
+            output.len(),
+            input.len() * repeats
+        )));
     }
     repeat_f32(input, output, repeats);
     Ok(())
@@ -169,29 +189,37 @@ pub fn repeat_f32_checked(
 
 /// Checked version of `embedding_f32`.
 pub fn embedding_f32_checked(
-    weight: &[f32], indices: &[u32], output: &mut [f32], embed_dim: usize,
+    weight: &[f32],
+    indices: &[u32],
+    output: &mut [f32],
+    embed_dim: usize,
 ) -> nnx_core::error::Result<()> {
     if embed_dim == 0 {
         return Err(EngineError::ShapeMismatch(
-            "embedding: embed_dim must be non-zero".to_string()
+            "embedding: embed_dim must be non-zero".to_string(),
         ));
     }
     let vocab_size = weight.len() / embed_dim;
     if weight.len() != vocab_size * embed_dim {
-        return Err(EngineError::ShapeMismatch(
-            format!("embedding: weight.len()={} not divisible by embed_dim={}", weight.len(), embed_dim)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "embedding: weight.len()={} not divisible by embed_dim={}",
+            weight.len(),
+            embed_dim
+        )));
     }
     if output.len() != indices.len() * embed_dim {
-        return Err(EngineError::ShapeMismatch(
-            format!("embedding: output.len()={} but indices.len()*embed_dim={}", output.len(), indices.len() * embed_dim)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "embedding: output.len()={} but indices.len()*embed_dim={}",
+            output.len(),
+            indices.len() * embed_dim
+        )));
     }
     for &idx in indices {
         if (idx as usize) >= vocab_size {
-            return Err(EngineError::ShapeMismatch(
-                format!("embedding: index {} out of range for vocab_size={}", idx, vocab_size)
-            ));
+            return Err(EngineError::ShapeMismatch(format!(
+                "embedding: index {} out of range for vocab_size={}",
+                idx, vocab_size
+            )));
         }
     }
     embedding_f32(weight, indices, output, embed_dim);

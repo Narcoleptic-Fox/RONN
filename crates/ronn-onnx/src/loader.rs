@@ -314,11 +314,7 @@ impl ModelLoader {
             }
             _ => {
                 // Keep fallback behavior for less common dtypes until each is mapped.
-                ronn_core::tensor::Tensor::zeros(
-                    shape.to_vec(),
-                    data_type,
-                    TensorLayout::RowMajor,
-                )?
+                ronn_core::tensor::Tensor::zeros(shape.to_vec(), data_type, TensorLayout::RowMajor)?
             }
         };
 

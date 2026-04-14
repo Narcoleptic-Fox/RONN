@@ -6,6 +6,8 @@ use crate::attention;
 use crate::cache::LayerCache;
 use crate::config::{BlockStyle, ModelConfig, NormType};
 use crate::ffn;
+use crate::weights::Matrix;
+use nnx_core::error::Result;
 
 /// Weights for one transformer block.
 pub struct BlockWeights {
@@ -14,19 +16,19 @@ pub struct BlockWeights {
     /// FFN norm weights [hidden_dim] (unused in Parallel block style)
     pub ffn_norm: Vec<f32>,
     /// Query projection [num_heads * head_dim, hidden_dim]
-    pub wq: Vec<f32>,
+    pub wq: Matrix,
     /// Key projection [num_kv_heads * head_dim, hidden_dim]
-    pub wk: Vec<f32>,
+    pub wk: Matrix,
     /// Value projection [num_kv_heads * head_dim, hidden_dim]
-    pub wv: Vec<f32>,
+    pub wv: Matrix,
     /// Output projection [hidden_dim, num_heads * head_dim]
-    pub wo: Vec<f32>,
+    pub wo: Matrix,
     /// Gate projection [intermediate_dim, hidden_dim] (SwiGLU/GeGLU), or fc1 for GELU
-    pub w_gate: Vec<f32>,
+    pub w_gate: Matrix,
     /// Up projection [intermediate_dim, hidden_dim] (SwiGLU/GeGLU; empty for GELU)
-    pub w_up: Vec<f32>,
+    pub w_up: Matrix,
     /// Down projection [hidden_dim, intermediate_dim] (SwiGLU/GeGLU), or fc2 for GELU
-    pub w_down: Vec<f32>,
+    pub w_down: Matrix,
     // --- Optional bias terms (architecture-dependent) ---
     /// Q bias [num_heads * head_dim] (GPT-2, Phi, Qwen)
     pub bq: Option<Vec<f32>>,
@@ -55,13 +57,41 @@ impl BlockWeights {
         Self {
             attn_norm: vec![1.0; hidden_dim],
             ffn_norm: vec![1.0; hidden_dim],
-            wq: vec![0.01; num_heads * head_dim * hidden_dim],
-            wk: vec![0.01; num_kv_heads * head_dim * hidden_dim],
-            wv: vec![0.01; num_kv_heads * head_dim * hidden_dim],
-            wo: vec![0.01; hidden_dim * num_heads * head_dim],
-            w_gate: vec![0.01; intermediate_dim * hidden_dim],
-            w_up: vec![0.01; intermediate_dim * hidden_dim],
-            w_down: vec![0.01; hidden_dim * intermediate_dim],
+            wq: Matrix::dense(
+                vec![0.01; num_heads * head_dim * hidden_dim],
+                num_heads * head_dim,
+                hidden_dim,
+            ),
+            wk: Matrix::dense(
+                vec![0.01; num_kv_heads * head_dim * hidden_dim],
+                num_kv_heads * head_dim,
+                hidden_dim,
+            ),
+            wv: Matrix::dense(
+                vec![0.01; num_kv_heads * head_dim * hidden_dim],
+                num_kv_heads * head_dim,
+                hidden_dim,
+            ),
+            wo: Matrix::dense(
+                vec![0.01; hidden_dim * num_heads * head_dim],
+                hidden_dim,
+                num_heads * head_dim,
+            ),
+            w_gate: Matrix::dense(
+                vec![0.01; intermediate_dim * hidden_dim],
+                intermediate_dim,
+                hidden_dim,
+            ),
+            w_up: Matrix::dense(
+                vec![0.01; intermediate_dim * hidden_dim],
+                intermediate_dim,
+                hidden_dim,
+            ),
+            w_down: Matrix::dense(
+                vec![0.01; hidden_dim * intermediate_dim],
+                hidden_dim,
+                intermediate_dim,
+            ),
             bq: None,
             bk: None,
             bv: None,
@@ -85,13 +115,25 @@ impl BlockWeights {
         Self {
             attn_norm: vec![1.0; hidden_dim],
             ffn_norm: vec![1.0; hidden_dim],
-            wq: vec![0.01; q_dim * hidden_dim],
-            wk: vec![0.01; kv_dim * hidden_dim],
-            wv: vec![0.01; kv_dim * hidden_dim],
-            wo: vec![0.01; hidden_dim * q_dim],
-            w_gate: vec![0.01; intermediate_dim * hidden_dim],
-            w_up: vec![0.01; intermediate_dim * hidden_dim],
-            w_down: vec![0.01; hidden_dim * intermediate_dim],
+            wq: Matrix::dense(vec![0.01; q_dim * hidden_dim], q_dim, hidden_dim),
+            wk: Matrix::dense(vec![0.01; kv_dim * hidden_dim], kv_dim, hidden_dim),
+            wv: Matrix::dense(vec![0.01; kv_dim * hidden_dim], kv_dim, hidden_dim),
+            wo: Matrix::dense(vec![0.01; hidden_dim * q_dim], hidden_dim, q_dim),
+            w_gate: Matrix::dense(
+                vec![0.01; intermediate_dim * hidden_dim],
+                intermediate_dim,
+                hidden_dim,
+            ),
+            w_up: Matrix::dense(
+                vec![0.01; intermediate_dim * hidden_dim],
+                intermediate_dim,
+                hidden_dim,
+            ),
+            w_down: Matrix::dense(
+                vec![0.01; hidden_dim * intermediate_dim],
+                hidden_dim,
+                intermediate_dim,
+            ),
             bq: Some(vec![0.001; q_dim]),
             bk: Some(vec![0.001; kv_dim]),
             bv: Some(vec![0.001; kv_dim]),
@@ -110,18 +152,40 @@ fn apply_norm(
     normed: &mut [f32],
     norm_type: &NormType,
     eps: f32,
-) {
+) -> Result<()> {
     let hidden_dim = hidden.len();
     match norm_type {
         NormType::RMSNorm => {
-            nnx_kernels::rms_norm::rms_norm_f32(hidden, weight, normed, eps);
+            nnx_kernels::rms_norm::rms_norm_f32_checked(hidden, weight, normed, eps)?;
         }
         NormType::LayerNorm => {
-            nnx_kernels::normalization::layer_norm_f32(
+            nnx_kernels::normalization::layer_norm_f32_checked(
                 hidden, weight, bias, normed, hidden_dim, eps,
-            );
+            )?;
         }
     }
+    Ok(())
+}
+
+fn apply_norm_batch(
+    hidden_batch: &[f32],
+    batch_size: usize,
+    weight: &[f32],
+    bias: Option<&[f32]>,
+    normed_batch: &mut [f32],
+    norm_type: &NormType,
+    eps: f32,
+) -> Result<()> {
+    let hidden_dim = weight.len();
+    debug_assert_eq!(hidden_batch.len(), batch_size * hidden_dim);
+    debug_assert_eq!(normed_batch.len(), batch_size * hidden_dim);
+
+    for batch_idx in 0..batch_size {
+        let hidden = &hidden_batch[batch_idx * hidden_dim..(batch_idx + 1) * hidden_dim];
+        let normed = &mut normed_batch[batch_idx * hidden_dim..(batch_idx + 1) * hidden_dim];
+        apply_norm(hidden, weight, bias, normed, norm_type, eps)?;
+    }
+    Ok(())
 }
 
 /// Run a single transformer block on one token during decoding.
@@ -134,7 +198,7 @@ pub fn forward_block(
     cache: &mut LayerCache,
     position: usize,
     config: &ModelConfig,
-) {
+) -> Result<()> {
     let hidden_dim = hidden.len();
     let mut normed = vec![0.0f32; hidden_dim];
 
@@ -146,14 +210,14 @@ pub fn forward_block(
         &mut normed,
         &config.norm_type,
         config.rms_norm_eps,
-    );
+    )?;
 
     match config.block_style {
         BlockStyle::Sequential => {
             // Standard: attn -> residual -> norm -> ffn -> residual
             let attn_out = attention::attention_decode_configurable(
                 &normed, weights, cache, position, config,
-            );
+            )?;
             nnx_kernels::activations::add_f32_inplace(hidden, &attn_out);
 
             // FFN norm
@@ -164,7 +228,7 @@ pub fn forward_block(
                 &mut normed,
                 &config.norm_type,
                 config.rms_norm_eps,
-            );
+            )?;
 
             let ffn_out = ffn::ffn_forward(&normed, weights, config);
             nnx_kernels::activations::add_f32_inplace(hidden, &ffn_out);
@@ -173,13 +237,79 @@ pub fn forward_block(
             // Phi-style: attn and ffn both use the same normed input
             let attn_out = attention::attention_decode_configurable(
                 &normed, weights, cache, position, config,
-            );
+            )?;
             let ffn_out = ffn::ffn_forward(&normed, weights, config);
 
             nnx_kernels::activations::add_f32_inplace(hidden, &attn_out);
             nnx_kernels::activations::add_f32_inplace(hidden, &ffn_out);
         }
     }
+    Ok(())
+}
+
+/// Run a transformer block across a prompt batch during prefill.
+pub fn forward_block_batch(
+    hidden_batch: &mut [f32],
+    batch_size: usize,
+    weights: &BlockWeights,
+    cache: &mut LayerCache,
+    start_position: usize,
+    config: &ModelConfig,
+) -> Result<()> {
+    let hidden_dim = config.hidden_dim;
+    let mut normed = vec![0.0f32; batch_size * hidden_dim];
+
+    apply_norm_batch(
+        hidden_batch,
+        batch_size,
+        &weights.attn_norm,
+        weights.attn_norm_bias.as_deref(),
+        &mut normed,
+        &config.norm_type,
+        config.rms_norm_eps,
+    )?;
+
+    match config.block_style {
+        BlockStyle::Sequential => {
+            let attn_out = attention::attention_prefill_batch_configurable(
+                &normed,
+                batch_size,
+                weights,
+                cache,
+                start_position,
+                config,
+            )?;
+            nnx_kernels::activations::add_f32_inplace(hidden_batch, &attn_out);
+
+            apply_norm_batch(
+                hidden_batch,
+                batch_size,
+                &weights.ffn_norm,
+                weights.ffn_norm_bias.as_deref(),
+                &mut normed,
+                &config.norm_type,
+                config.rms_norm_eps,
+            )?;
+
+            let ffn_out = ffn::ffn_forward_batch(&normed, batch_size, weights, config);
+            nnx_kernels::activations::add_f32_inplace(hidden_batch, &ffn_out);
+        }
+        BlockStyle::Parallel => {
+            let attn_out = attention::attention_prefill_batch_configurable(
+                &normed,
+                batch_size,
+                weights,
+                cache,
+                start_position,
+                config,
+            )?;
+            let ffn_out = ffn::ffn_forward_batch(&normed, batch_size, weights, config);
+
+            nnx_kernels::activations::add_f32_inplace(hidden_batch, &attn_out);
+            nnx_kernels::activations::add_f32_inplace(hidden_batch, &ffn_out);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -196,16 +326,25 @@ mod tests {
         let intermediate_dim = 16;
 
         let config = ModelConfig::test_llama(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim, 32,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+            32,
         );
         let weights = BlockWeights::test_no_bias(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
         );
 
         let mut hidden = vec![1.0f32; hidden_dim];
         let mut cache = LayerCache::new(16, num_kv_heads, head_dim);
 
-        forward_block(&mut hidden, &weights, &mut cache, 0, &config);
+        forward_block(&mut hidden, &weights, &mut cache, 0, &config).unwrap();
 
         assert!(hidden.iter().all(|v| v.is_finite()));
         assert_eq!(cache.len(), 1);
@@ -243,13 +382,17 @@ mod tests {
         };
 
         let weights = BlockWeights::test_with_bias(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
         );
 
         let mut hidden = vec![1.0f32; hidden_dim];
         let mut cache = LayerCache::new(16, num_kv_heads, head_dim);
 
-        forward_block(&mut hidden, &weights, &mut cache, 0, &config);
+        forward_block(&mut hidden, &weights, &mut cache, 0, &config).unwrap();
 
         assert!(hidden.iter().all(|v| v.is_finite()));
         assert_eq!(cache.len(), 1);
@@ -279,7 +422,10 @@ mod tests {
             rms_norm_eps: 1e-5,
             norm_type: NormType::LayerNorm,
             ffn_type: FFNType::SwiGLU,
-            pos_encoding: PosEncoding::PartialRoPE { freq_base: 10000.0, rotary_dim: 2 },
+            pos_encoding: PosEncoding::PartialRoPE {
+                freq_base: 10000.0,
+                rotary_dim: 2,
+            },
             block_style: BlockStyle::Parallel,
             has_qkv_bias: true,
             has_output_bias: true,
@@ -287,13 +433,17 @@ mod tests {
         };
 
         let weights = BlockWeights::test_with_bias(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
         );
 
         let mut hidden = vec![1.0f32; hidden_dim];
         let mut cache = LayerCache::new(16, num_kv_heads, head_dim);
 
-        forward_block(&mut hidden, &weights, &mut cache, 0, &config);
+        forward_block(&mut hidden, &weights, &mut cache, 0, &config).unwrap();
 
         assert!(hidden.iter().all(|v| v.is_finite()));
         assert_eq!(cache.len(), 1);
@@ -331,13 +481,17 @@ mod tests {
         };
 
         let weights = BlockWeights::test_no_bias(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
         );
 
         let mut hidden = vec![1.0f32; hidden_dim];
         let mut cache = LayerCache::new(16, num_kv_heads, head_dim);
 
-        forward_block(&mut hidden, &weights, &mut cache, 0, &config);
+        forward_block(&mut hidden, &weights, &mut cache, 0, &config).unwrap();
 
         assert!(hidden.iter().all(|v| v.is_finite()));
         assert_eq!(cache.len(), 1);
@@ -377,7 +531,11 @@ mod tests {
         let q_dim = num_heads * head_dim;
         let kv_dim = num_kv_heads * head_dim;
         let mut weights = BlockWeights::test_no_bias(
-            hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
         );
         weights.bq = Some(vec![0.001; q_dim]);
         weights.bk = Some(vec![0.001; kv_dim]);
@@ -386,7 +544,7 @@ mod tests {
         let mut hidden = vec![1.0f32; hidden_dim];
         let mut cache = LayerCache::new(16, num_kv_heads, head_dim);
 
-        forward_block(&mut hidden, &weights, &mut cache, 0, &config);
+        forward_block(&mut hidden, &weights, &mut cache, 0, &config).unwrap();
 
         assert!(hidden.iter().all(|v| v.is_finite()));
         assert_eq!(cache.len(), 1);

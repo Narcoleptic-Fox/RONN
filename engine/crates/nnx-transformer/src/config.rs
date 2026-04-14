@@ -102,21 +102,25 @@ impl ModelConfig {
             .ok_or("missing general.architecture")?
             .to_string();
 
-        let num_layers = metadata
-            .num_layers()
-            .ok_or("missing block_count")? as usize;
+        let num_layers = metadata.num_layers().ok_or("missing block_count")? as usize;
 
-        let hidden_dim = metadata
-            .hidden_dim()
-            .ok_or("missing embedding_length")? as usize;
+        let hidden_dim = metadata.hidden_dim().ok_or("missing embedding_length")? as usize;
 
-        let num_heads = metadata
-            .num_heads()
-            .ok_or("missing attention.head_count")? as usize;
+        let num_heads = metadata.num_heads().ok_or("missing attention.head_count")? as usize;
+        if num_heads == 0 {
+            return Err("attention.head_count must be non-zero".into());
+        }
 
-        let num_kv_heads = metadata
-            .num_kv_heads()
-            .unwrap_or(num_heads as u32) as usize;
+        let num_kv_heads = metadata.num_kv_heads().unwrap_or(num_heads as u32) as usize;
+        if num_kv_heads == 0 {
+            return Err("attention.head_count_kv must be non-zero".into());
+        }
+        if hidden_dim % num_heads != 0 {
+            return Err(format!(
+                "embedding_length {} is not divisible by attention.head_count {}",
+                hidden_dim, num_heads
+            ));
+        }
 
         let head_dim = hidden_dim / num_heads;
 
@@ -124,17 +128,11 @@ impl ModelConfig {
             .feed_forward_dim()
             .unwrap_or((hidden_dim * 4 * 2 / 3) as u32) as usize;
 
-        let vocab_size = metadata
-            .vocab_size()
-            .unwrap_or(32000) as usize;
+        let vocab_size = metadata.vocab_size().unwrap_or(32000) as usize;
 
-        let max_context_length = metadata
-            .context_length()
-            .unwrap_or(4096) as usize;
+        let max_context_length = metadata.context_length().unwrap_or(4096) as usize;
 
-        let rope_freq_base = metadata
-            .rope_freq_base()
-            .unwrap_or(10000.0);
+        let rope_freq_base = metadata.rope_freq_base().unwrap_or(10000.0);
 
         let rms_norm_eps = metadata
             .get(&format!("{architecture}.attention.layer_norm_rms_epsilon"))
@@ -148,7 +146,7 @@ impl ModelConfig {
             "phi2" | "phi3" | "phi" => Architecture::Phi,
             "gemma" | "gemma2" => Architecture::Gemma,
             "qwen" | "qwen2" => Architecture::Qwen,
-            _ => Architecture::Llama, // default fallback
+            _ => return Err(format!("unsupported architecture: {}", architecture)),
         };
 
         let (norm_type, ffn_type, pos_encoding, block_style, has_qkv_bias, has_output_bias) =
@@ -156,7 +154,9 @@ impl ModelConfig {
                 Architecture::Llama => (
                     NormType::RMSNorm,
                     FFNType::SwiGLU,
-                    PosEncoding::RoPE { freq_base: rope_freq_base },
+                    PosEncoding::RoPE {
+                        freq_base: rope_freq_base,
+                    },
                     BlockStyle::Sequential,
                     false,
                     false,
@@ -183,7 +183,9 @@ impl ModelConfig {
                 Architecture::Gemma => (
                     NormType::RMSNorm,
                     FFNType::GeGLU,
-                    PosEncoding::RoPE { freq_base: rope_freq_base },
+                    PosEncoding::RoPE {
+                        freq_base: rope_freq_base,
+                    },
                     BlockStyle::Sequential,
                     false,
                     false,
@@ -191,7 +193,9 @@ impl ModelConfig {
                 Architecture::Qwen => (
                     NormType::RMSNorm,
                     FFNType::SwiGLU,
-                    PosEncoding::RoPE { freq_base: rope_freq_base },
+                    PosEncoding::RoPE {
+                        freq_base: rope_freq_base,
+                    },
                     BlockStyle::Sequential,
                     true,
                     false,
@@ -203,7 +207,7 @@ impl ModelConfig {
             _ => None,
         };
 
-        Ok(Self {
+        let config = Self {
             architecture,
             arch,
             num_layers,
@@ -223,7 +227,69 @@ impl ModelConfig {
             has_qkv_bias,
             has_output_bias,
             embedding_scale,
-        })
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate configuration invariants that would otherwise fail deep in kernels.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.num_heads == 0 {
+            return Err("num_heads must be non-zero".into());
+        }
+        if self.num_kv_heads == 0 {
+            return Err("num_kv_heads must be non-zero".into());
+        }
+        if self.hidden_dim == 0 {
+            return Err("hidden_dim must be non-zero".into());
+        }
+        if self.hidden_dim % self.num_heads != 0 {
+            return Err(format!(
+                "hidden_dim {} must be divisible by num_heads {}",
+                self.hidden_dim, self.num_heads
+            ));
+        }
+        if self.num_heads % self.num_kv_heads != 0 {
+            return Err(format!(
+                "num_heads {} must be divisible by num_kv_heads {}",
+                self.num_heads, self.num_kv_heads
+            ));
+        }
+        if self.head_dim == 0 {
+            return Err("head_dim must be non-zero".into());
+        }
+        if self.max_context_length == 0 {
+            return Err("max_context_length must be non-zero".into());
+        }
+        match self.pos_encoding {
+            PosEncoding::RoPE { .. } => {
+                if self.head_dim % 2 != 0 {
+                    return Err(format!(
+                        "RoPE requires even head_dim, got {}",
+                        self.head_dim
+                    ));
+                }
+            }
+            PosEncoding::PartialRoPE { rotary_dim, .. } => {
+                if rotary_dim == 0 {
+                    return Err("PartialRoPE rotary_dim must be non-zero".into());
+                }
+                if rotary_dim > self.head_dim {
+                    return Err(format!(
+                        "PartialRoPE rotary_dim {} exceeds head_dim {}",
+                        rotary_dim, self.head_dim
+                    ));
+                }
+                if rotary_dim % 2 != 0 {
+                    return Err(format!(
+                        "PartialRoPE rotary_dim must be even, got {}",
+                        rotary_dim
+                    ));
+                }
+            }
+            PosEncoding::Learned | PosEncoding::None => {}
+        }
+        Ok(())
     }
 
     /// Total parameter count estimate.

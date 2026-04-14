@@ -136,9 +136,15 @@ impl<'a> TensorView<'a> {
         Ok(Self { data, shape, dtype })
     }
 
-    pub fn shape(&self) -> &Shape { &self.shape }
-    pub fn dtype(&self) -> DType { self.dtype }
-    pub fn as_bytes(&self) -> &[u8] { self.data }
+    pub fn shape(&self) -> &Shape {
+        &self.shape
+    }
+    pub fn dtype(&self) -> DType {
+        self.dtype
+    }
+    pub fn as_bytes(&self) -> &[u8] {
+        self.data
+    }
 
     /// Copy this view into an owned tensor.
     pub fn to_tensor(&self, device: Device) -> Tensor {

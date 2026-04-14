@@ -26,22 +26,29 @@ pub fn rms_norm_f32(x: &[f32], weight: &[f32], output: &mut [f32], eps: f32) {
 
 /// Checked version of `rms_norm_f32` that validates dimensions before computing.
 pub fn rms_norm_f32_checked(
-    x: &[f32], weight: &[f32], output: &mut [f32], eps: f32,
+    x: &[f32],
+    weight: &[f32],
+    output: &mut [f32],
+    eps: f32,
 ) -> nnx_core::error::Result<()> {
     let n = x.len();
     if weight.len() != n {
-        return Err(EngineError::ShapeMismatch(
-            format!("rms_norm: weight.len()={} != x.len()={}", weight.len(), n)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "rms_norm: weight.len()={} != x.len()={}",
+            weight.len(),
+            n
+        )));
     }
     if output.len() != n {
-        return Err(EngineError::ShapeMismatch(
-            format!("rms_norm: output.len()={} != x.len()={}", output.len(), n)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "rms_norm: output.len()={} != x.len()={}",
+            output.len(),
+            n
+        )));
     }
     if n == 0 {
         return Err(EngineError::ShapeMismatch(
-            "rms_norm: input must be non-empty".to_string()
+            "rms_norm: input must be non-empty".to_string(),
         ));
     }
     rms_norm_f32(x, weight, output, eps);

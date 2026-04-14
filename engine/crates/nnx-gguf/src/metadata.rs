@@ -52,7 +52,8 @@ impl GGUFMetadata {
 
     pub fn num_kv_heads(&self) -> Option<u32> {
         let arch = self.architecture()?;
-        self.get(&format!("{arch}.attention.head_count_kv"))?.as_u32()
+        self.get(&format!("{arch}.attention.head_count_kv"))?
+            .as_u32()
     }
 
     pub fn context_length(&self) -> Option<u32> {
@@ -62,11 +63,10 @@ impl GGUFMetadata {
 
     pub fn vocab_size(&self) -> Option<u32> {
         // Try tokenizer key first, then architecture key
-        self.get("tokenizer.ggml.tokens")
-            .and_then(|v| match v {
-                GGUFValue::Array(arr) => Some(arr.len() as u32),
-                _ => None,
-            })
+        self.get("tokenizer.ggml.tokens").and_then(|v| match v {
+            GGUFValue::Array(arr) => Some(arr.len() as u32),
+            _ => None,
+        })
     }
 
     pub fn feed_forward_dim(&self) -> Option<u32> {

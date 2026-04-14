@@ -12,7 +12,9 @@ pub fn sum_f32(x: &[f32]) -> f32 {
 
 /// Mean of all elements.
 pub fn mean_f32(x: &[f32]) -> f32 {
-    if x.is_empty() { return 0.0; }
+    if x.is_empty() {
+        return 0.0;
+    }
     x.iter().sum::<f32>() / x.len() as f32
 }
 
@@ -28,7 +30,8 @@ pub fn min_f32(x: &[f32]) -> f32 {
 
 /// Index of maximum value.
 pub fn argmax_f32(x: &[f32]) -> usize {
-    x.iter().enumerate()
+    x.iter()
+        .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i)
         .unwrap_or(0)
@@ -36,7 +39,8 @@ pub fn argmax_f32(x: &[f32]) -> usize {
 
 /// Index of minimum value.
 pub fn argmin_f32(x: &[f32]) -> usize {
-    x.iter().enumerate()
+    x.iter()
+        .enumerate()
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i)
         .unwrap_or(0)
@@ -49,7 +53,9 @@ pub fn prod_f32(x: &[f32]) -> f32 {
 
 /// Variance of all elements.
 pub fn var_f32(x: &[f32]) -> f32 {
-    if x.len() < 2 { return 0.0; }
+    if x.len() < 2 {
+        return 0.0;
+    }
     let mean = mean_f32(x);
     x.iter().map(|&v| (v - mean) * (v - mean)).sum::<f32>() / x.len() as f32
 }
@@ -87,28 +93,39 @@ pub fn sum_axis_2d(x: &[f32], output: &mut [f32], rows: usize, cols: usize, axis
 pub fn mean_axis_2d(x: &[f32], output: &mut [f32], rows: usize, cols: usize, axis: usize) {
     sum_axis_2d(x, output, rows, cols, axis);
     let divisor = if axis == 0 { rows as f32 } else { cols as f32 };
-    for v in output.iter_mut() { *v /= divisor; }
+    for v in output.iter_mut() {
+        *v /= divisor;
+    }
 }
 
 /// Checked version of `sum_axis_2d` that returns Result instead of panicking on bad axis.
 pub fn sum_axis_2d_checked(
-    x: &[f32], output: &mut [f32], rows: usize, cols: usize, axis: usize,
+    x: &[f32],
+    output: &mut [f32],
+    rows: usize,
+    cols: usize,
+    axis: usize,
 ) -> nnx_core::error::Result<()> {
     if axis > 1 {
-        return Err(EngineError::Kernel(
-            format!("sum_axis_2d: axis must be 0 or 1, got {}", axis)
-        ));
+        return Err(EngineError::Kernel(format!(
+            "sum_axis_2d: axis must be 0 or 1, got {}",
+            axis
+        )));
     }
     if x.len() != rows * cols {
-        return Err(EngineError::ShapeMismatch(
-            format!("sum_axis_2d: x.len()={} but rows*cols={}", x.len(), rows * cols)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "sum_axis_2d: x.len()={} but rows*cols={}",
+            x.len(),
+            rows * cols
+        )));
     }
     let expected_out = if axis == 0 { cols } else { rows };
     if output.len() != expected_out {
-        return Err(EngineError::ShapeMismatch(
-            format!("sum_axis_2d: output.len()={} but expected {}", output.len(), expected_out)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "sum_axis_2d: output.len()={} but expected {}",
+            output.len(),
+            expected_out
+        )));
     }
     sum_axis_2d(x, output, rows, cols, axis);
     Ok(())
@@ -116,23 +133,32 @@ pub fn sum_axis_2d_checked(
 
 /// Checked version of `mean_axis_2d`.
 pub fn mean_axis_2d_checked(
-    x: &[f32], output: &mut [f32], rows: usize, cols: usize, axis: usize,
+    x: &[f32],
+    output: &mut [f32],
+    rows: usize,
+    cols: usize,
+    axis: usize,
 ) -> nnx_core::error::Result<()> {
     if axis > 1 {
-        return Err(EngineError::Kernel(
-            format!("mean_axis_2d: axis must be 0 or 1, got {}", axis)
-        ));
+        return Err(EngineError::Kernel(format!(
+            "mean_axis_2d: axis must be 0 or 1, got {}",
+            axis
+        )));
     }
     if x.len() != rows * cols {
-        return Err(EngineError::ShapeMismatch(
-            format!("mean_axis_2d: x.len()={} but rows*cols={}", x.len(), rows * cols)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "mean_axis_2d: x.len()={} but rows*cols={}",
+            x.len(),
+            rows * cols
+        )));
     }
     let expected_out = if axis == 0 { cols } else { rows };
     if output.len() != expected_out {
-        return Err(EngineError::ShapeMismatch(
-            format!("mean_axis_2d: output.len()={} but expected {}", output.len(), expected_out)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "mean_axis_2d: output.len()={} but expected {}",
+            output.len(),
+            expected_out
+        )));
     }
     mean_axis_2d(x, output, rows, cols, axis);
     Ok(())

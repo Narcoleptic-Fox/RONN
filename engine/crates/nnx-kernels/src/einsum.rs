@@ -142,7 +142,9 @@ pub fn einsum_f32(
                     &a[bi * a_batch_stride..(bi + 1) * a_batch_stride],
                     &b[bi * b_batch_stride..(bi + 1) * b_batch_stride],
                     &mut output[bi * c_batch_stride..(bi + 1) * c_batch_stride],
-                    m, k, n,
+                    m,
+                    k,
+                    n,
                 );
             }
         }
@@ -188,13 +190,17 @@ pub fn einsum_f32(
                         &a[a_offset..a_offset + q_len * k_len],
                         &b[b_offset..b_offset + k_len * d_dim],
                         &mut output[o_offset..o_offset + q_len * d_dim],
-                        q_len, k_len, d_dim,
+                        q_len,
+                        k_len,
+                        d_dim,
                     );
                 }
             }
         }
-        EinsumPattern::Transpose | EinsumPattern::RowSum |
-        EinsumPattern::ColSum | EinsumPattern::TotalSum => {
+        EinsumPattern::Transpose
+        | EinsumPattern::RowSum
+        | EinsumPattern::ColSum
+        | EinsumPattern::TotalSum => {
             // These are single-operand -- use einsum_unary_f32 instead
             panic!("use einsum_unary_f32 for single-operand patterns like {subscripts}");
         }
@@ -211,124 +217,152 @@ pub fn einsum_f32_checked(
     b_shape: &[usize],
 ) -> nnx_core::error::Result<()> {
     let pattern = parse_einsum(subscripts)
-        .ok_or_else(|| EngineError::Kernel(
-            format!("unsupported einsum pattern: {subscripts}")
-        ))?;
+        .ok_or_else(|| EngineError::Kernel(format!("unsupported einsum pattern: {subscripts}")))?;
 
     match pattern {
-        EinsumPattern::Transpose | EinsumPattern::RowSum |
-        EinsumPattern::ColSum | EinsumPattern::TotalSum => {
-            return Err(EngineError::Kernel(
-                format!("use einsum_unary_f32_checked for single-operand patterns like {subscripts}")
-            ));
+        EinsumPattern::Transpose
+        | EinsumPattern::RowSum
+        | EinsumPattern::ColSum
+        | EinsumPattern::TotalSum => {
+            return Err(EngineError::Kernel(format!(
+                "use einsum_unary_f32_checked for single-operand patterns like {subscripts}"
+            )));
         }
         EinsumPattern::MatMul => {
             if a_shape.len() != 2 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatMul: a_shape must be 2D, got {}D", a_shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatMul: a_shape must be 2D, got {}D",
+                    a_shape.len()
+                )));
             }
             if b_shape.len() != 2 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatMul: b_shape must be 2D, got {}D", b_shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatMul: b_shape must be 2D, got {}D",
+                    b_shape.len()
+                )));
             }
             let (m, k) = (a_shape[0], a_shape[1]);
             let n = b_shape[1];
             if k != b_shape[0] {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatMul: a_shape[1]={} != b_shape[0]={}", k, b_shape[0])
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatMul: a_shape[1]={} != b_shape[0]={}",
+                    k, b_shape[0]
+                )));
             }
             if a.len() != m * k {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatMul: a.len()={} but m*k={}", a.len(), m * k)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatMul: a.len()={} but m*k={}",
+                    a.len(),
+                    m * k
+                )));
             }
             if b.len() != k * n {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatMul: b.len()={} but k*n={}", b.len(), k * n)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatMul: b.len()={} but k*n={}",
+                    b.len(),
+                    k * n
+                )));
             }
             if output.len() != m * n {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatMul: output.len()={} but m*n={}", output.len(), m * n)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatMul: output.len()={} but m*n={}",
+                    output.len(),
+                    m * n
+                )));
             }
         }
         EinsumPattern::MatVec => {
             if a_shape.len() != 2 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatVec: a_shape must be 2D, got {}D", a_shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatVec: a_shape must be 2D, got {}D",
+                    a_shape.len()
+                )));
             }
             if b_shape.len() != 1 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatVec: b_shape must be 1D, got {}D", b_shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatVec: b_shape must be 1D, got {}D",
+                    b_shape.len()
+                )));
             }
             let (m, k) = (a_shape[0], a_shape[1]);
             if k != b_shape[0] {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatVec: a_shape[1]={} != b_shape[0]={}", k, b_shape[0])
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatVec: a_shape[1]={} != b_shape[0]={}",
+                    k, b_shape[0]
+                )));
             }
             if output.len() != m {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum MatVec: output.len()={} but m={}", output.len(), m)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum MatVec: output.len()={} but m={}",
+                    output.len(),
+                    m
+                )));
             }
         }
         EinsumPattern::Hadamard => {
             if a.len() != b.len() || a.len() != output.len() {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum Hadamard: a.len()={}, b.len()={}, output.len()={} must all match", a.len(), b.len(), output.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum Hadamard: a.len()={}, b.len()={}, output.len()={} must all match",
+                    a.len(),
+                    b.len(),
+                    output.len()
+                )));
             }
         }
         EinsumPattern::FrobeniusInner | EinsumPattern::DotProduct => {
             if a.len() != b.len() {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum dot/frobenius: a.len()={} != b.len()={}", a.len(), b.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum dot/frobenius: a.len()={} != b.len()={}",
+                    a.len(),
+                    b.len()
+                )));
             }
             if output.len() != 1 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum dot/frobenius: output.len()={} but expected 1", output.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum dot/frobenius: output.len()={} but expected 1",
+                    output.len()
+                )));
             }
         }
         EinsumPattern::OuterProduct => {
             let m = a_shape[0];
             let n = b_shape[0];
             if output.len() != m * n {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum OuterProduct: output.len()={} but m*n={}", output.len(), m * n)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum OuterProduct: output.len()={} but m*n={}",
+                    output.len(),
+                    m * n
+                )));
             }
         }
         EinsumPattern::BatchMatMul => {
             if a_shape.len() != 3 || b_shape.len() != 3 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum BatchMatMul: shapes must be 3D, got a={}D b={}D", a_shape.len(), b_shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum BatchMatMul: shapes must be 3D, got a={}D b={}D",
+                    a_shape.len(),
+                    b_shape.len()
+                )));
             }
             if a_shape[0] != b_shape[0] {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum BatchMatMul: batch dims differ a[0]={} b[0]={}", a_shape[0], b_shape[0])
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum BatchMatMul: batch dims differ a[0]={} b[0]={}",
+                    a_shape[0], b_shape[0]
+                )));
             }
             if a_shape[2] != b_shape[1] {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum BatchMatMul: inner dims differ a[2]={} b[1]={}", a_shape[2], b_shape[1])
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum BatchMatMul: inner dims differ a[2]={} b[1]={}",
+                    a_shape[2], b_shape[1]
+                )));
             }
         }
         EinsumPattern::AttentionScores | EinsumPattern::AttentionOutput => {
             if a_shape.len() != 4 || b_shape.len() != 4 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum attention: shapes must be 4D, got a={}D b={}D", a_shape.len(), b_shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum attention: shapes must be 4D, got a={}D b={}D",
+                    a_shape.len(),
+                    b_shape.len()
+                )));
             }
         }
     }
@@ -339,12 +373,7 @@ pub fn einsum_f32_checked(
 }
 
 /// Single-operand einsum (transpose, reductions).
-pub fn einsum_unary_f32(
-    subscripts: &str,
-    input: &[f32],
-    output: &mut [f32],
-    shape: &[usize],
-) {
+pub fn einsum_unary_f32(subscripts: &str, input: &[f32], output: &mut [f32], shape: &[usize]) {
     let pattern = parse_einsum(subscripts)
         .unwrap_or_else(|| panic!("unsupported einsum pattern: {subscripts}"));
 
@@ -389,66 +418,76 @@ pub fn einsum_unary_f32_checked(
     shape: &[usize],
 ) -> nnx_core::error::Result<()> {
     let pattern = parse_einsum(subscripts)
-        .ok_or_else(|| EngineError::Kernel(
-            format!("unsupported einsum pattern: {subscripts}")
-        ))?;
+        .ok_or_else(|| EngineError::Kernel(format!("unsupported einsum pattern: {subscripts}")))?;
 
     match pattern {
         EinsumPattern::Transpose => {
             if shape.len() != 2 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum Transpose: shape must be 2D, got {}D", shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum Transpose: shape must be 2D, got {}D",
+                    shape.len()
+                )));
             }
             let (rows, cols) = (shape[0], shape[1]);
             if input.len() != rows * cols {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum Transpose: input.len()={} but rows*cols={}", input.len(), rows * cols)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum Transpose: input.len()={} but rows*cols={}",
+                    input.len(),
+                    rows * cols
+                )));
             }
             if output.len() != rows * cols {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum Transpose: output.len()={} but rows*cols={}", output.len(), rows * cols)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum Transpose: output.len()={} but rows*cols={}",
+                    output.len(),
+                    rows * cols
+                )));
             }
         }
         EinsumPattern::RowSum => {
             if shape.len() != 2 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum RowSum: shape must be 2D, got {}D", shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum RowSum: shape must be 2D, got {}D",
+                    shape.len()
+                )));
             }
             let (rows, _cols) = (shape[0], shape[1]);
             if output.len() != rows {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum RowSum: output.len()={} but rows={}", output.len(), rows)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum RowSum: output.len()={} but rows={}",
+                    output.len(),
+                    rows
+                )));
             }
         }
         EinsumPattern::ColSum => {
             if shape.len() != 2 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum ColSum: shape must be 2D, got {}D", shape.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum ColSum: shape must be 2D, got {}D",
+                    shape.len()
+                )));
             }
             let (_rows, cols) = (shape[0], shape[1]);
             if output.len() != cols {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum ColSum: output.len()={} but cols={}", output.len(), cols)
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum ColSum: output.len()={} but cols={}",
+                    output.len(),
+                    cols
+                )));
             }
         }
         EinsumPattern::TotalSum => {
             if output.len() != 1 {
-                return Err(EngineError::ShapeMismatch(
-                    format!("einsum TotalSum: output.len()={} but expected 1", output.len())
-                ));
+                return Err(EngineError::ShapeMismatch(format!(
+                    "einsum TotalSum: output.len()={} but expected 1",
+                    output.len()
+                )));
             }
         }
         _ => {
-            return Err(EngineError::Kernel(
-                format!("einsum_unary: pattern requires two operands: {subscripts}")
-            ));
+            return Err(EngineError::Kernel(format!(
+                "einsum_unary: pattern requires two operands: {subscripts}"
+            )));
         }
     }
 
@@ -464,7 +503,10 @@ mod tests {
     fn test_parse_patterns() {
         assert_eq!(parse_einsum("ij,jk->ik"), Some(EinsumPattern::MatMul));
         assert_eq!(parse_einsum("i,i->"), Some(EinsumPattern::DotProduct));
-        assert_eq!(parse_einsum("bij,bjk->bik"), Some(EinsumPattern::BatchMatMul));
+        assert_eq!(
+            parse_einsum("bij,bjk->bik"),
+            Some(EinsumPattern::BatchMatMul)
+        );
         assert_eq!(parse_einsum("xyz"), None);
     }
 
@@ -527,8 +569,11 @@ mod tests {
         let mut scores = [0.0f32; 4];
         einsum_f32(
             "bhqd,bhkd->bhqk",
-            &q, &k, &mut scores,
-            &[1, 1, 2, 2], &[1, 1, 2, 2],
+            &q,
+            &k,
+            &mut scores,
+            &[1, 1, 2, 2],
+            &[1, 1, 2, 2],
         );
         assert_eq!(scores, [1.0, 0.0, 0.0, 1.0]);
     }

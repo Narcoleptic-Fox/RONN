@@ -9,7 +9,11 @@ use nnx_core::error::EngineError;
 pub fn arange_f32(output: &mut [f32], start: f32, stop: f32, step: f32) -> usize {
     assert!(step != 0.0, "step must be non-zero");
     let n = ((stop - start) / step).ceil().max(0.0) as usize;
-    assert!(output.len() >= n, "output buffer too small: need {n}, got {}", output.len());
+    assert!(
+        output.len() >= n,
+        "output buffer too small: need {n}, got {}",
+        output.len()
+    );
     for i in 0..n {
         output[i] = start + i as f32 * step;
     }
@@ -17,17 +21,24 @@ pub fn arange_f32(output: &mut [f32], start: f32, stop: f32, step: f32) -> usize
 }
 
 /// Checked version of `arange_f32`.
-pub fn arange_f32_checked(output: &mut [f32], start: f32, stop: f32, step: f32) -> nnx_core::error::Result<usize> {
+pub fn arange_f32_checked(
+    output: &mut [f32],
+    start: f32,
+    stop: f32,
+    step: f32,
+) -> nnx_core::error::Result<usize> {
     if step == 0.0 {
         return Err(EngineError::Kernel(
-            "arange: step must be non-zero".to_string()
+            "arange: step must be non-zero".to_string(),
         ));
     }
     let n = ((stop - start) / step).ceil().max(0.0) as usize;
     if output.len() < n {
-        return Err(EngineError::ShapeMismatch(
-            format!("arange: output.len()={} but need at least {}", output.len(), n)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "arange: output.len()={} but need at least {}",
+            output.len(),
+            n
+        )));
     }
     Ok(arange_f32(output, start, stop, step))
 }
@@ -42,7 +53,7 @@ pub fn arange_len(start: f32, stop: f32, step: f32) -> usize {
 pub fn arange_len_checked(start: f32, stop: f32, step: f32) -> nnx_core::error::Result<usize> {
     if step == 0.0 {
         return Err(EngineError::Kernel(
-            "arange_len: step must be non-zero".to_string()
+            "arange_len: step must be non-zero".to_string(),
         ));
     }
     Ok(((stop - start) / step).ceil().max(0.0) as usize)
@@ -51,7 +62,9 @@ pub fn arange_len_checked(start: f32, stop: f32, step: f32) -> nnx_core::error::
 /// Fill `output` with evenly-spaced values from `start` to `stop` (inclusive).
 pub fn linspace_f32(output: &mut [f32], start: f32, stop: f32) {
     let n = output.len();
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     if n == 1 {
         output[0] = start;
         return;
@@ -94,9 +107,11 @@ pub fn eye_f32(output: &mut [f32], n: usize) {
 /// Checked version of `eye_f32`.
 pub fn eye_f32_checked(output: &mut [f32], n: usize) -> nnx_core::error::Result<()> {
     if output.len() != n * n {
-        return Err(EngineError::ShapeMismatch(
-            format!("eye: output.len()={} but n*n={}", output.len(), n * n)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "eye: output.len()={} but n*n={}",
+            output.len(),
+            n * n
+        )));
     }
     eye_f32(output, n);
     Ok(())

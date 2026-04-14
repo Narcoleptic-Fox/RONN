@@ -44,13 +44,13 @@ pub mod loader;
 pub mod model;
 pub mod sampler;
 pub mod tokenizer;
+pub mod weights;
 
 pub use backend::NnxBackend;
 pub use cache::KVCache;
-pub use config::{
-    Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding,
-};
+pub use config::{Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding};
 pub use generate::{GenerateConfig, GenerateOutput, StopReason, generate};
 pub use model::{Model, ModelWeights};
 pub use sampler::SamplerConfig;
 pub use tokenizer::Tokenizer;
+pub use weights::Matrix;

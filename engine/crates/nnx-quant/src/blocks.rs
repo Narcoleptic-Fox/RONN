@@ -26,10 +26,10 @@ pub struct BlockQ8_0 {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct BlockQ4K {
-    pub d: half::f16,       // super-block scale
-    pub dmin: half::f16,    // super-block min
-    pub scales: [u8; 12],   // sub-block scales (packed)
-    pub quants: [u8; 128],  // 256 values at 4 bits each
+    pub d: half::f16,      // super-block scale
+    pub dmin: half::f16,   // super-block min
+    pub scales: [u8; 12],  // sub-block scales (packed)
+    pub quants: [u8; 128], // 256 values at 4 bits each
 }
 
 /// Q5_K: k-quant 5-bit, block size 256.
@@ -39,18 +39,18 @@ pub struct BlockQ5K {
     pub d: half::f16,
     pub dmin: half::f16,
     pub scales: [u8; 12],
-    pub qh: [u8; 32],      // high bits
-    pub qs: [u8; 128],     // low 4 bits
+    pub qh: [u8; 32],  // high bits
+    pub qs: [u8; 128], // low 4 bits
 }
 
 /// Q6_K: k-quant 6-bit, block size 256.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct BlockQ6K {
-    pub ql: [u8; 128],     // low 4 bits
-    pub qh: [u8; 64],      // high 2 bits
-    pub scales: [i8; 16],  // sub-block scales
-    pub d: half::f16,      // super-block scale
+    pub ql: [u8; 128],    // low 4 bits
+    pub qh: [u8; 64],     // high 2 bits
+    pub scales: [i8; 16], // sub-block scales
+    pub d: half::f16,     // super-block scale
 }
 
 // Compile-time size assertions

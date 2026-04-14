@@ -97,18 +97,18 @@ impl GGMLType {
             Self::I16 => 2,
             Self::I32 => 4,
             Self::I64 => 8,
-            Self::Q4_0 => 18,   // 2 (f16 scale) + 16 (4-bit × 32)
-            Self::Q4_1 => 20,   // 2 (scale) + 2 (min) + 16
-            Self::Q5_0 => 22,   // 2 + 4 (high bits) + 16
-            Self::Q5_1 => 24,   // 2 + 2 + 4 + 16
-            Self::Q8_0 => 34,   // 2 (scale) + 32 (8-bit × 32)
-            Self::Q8_1 => 40,   // 4 (f32 scale) + 4 (f32 min) + 32
+            Self::Q4_0 => 18,              // 2 (f16 scale) + 16 (4-bit × 32)
+            Self::Q4_1 => 20,              // 2 (scale) + 2 (min) + 16
+            Self::Q5_0 => 22,              // 2 + 4 (high bits) + 16
+            Self::Q5_1 => 24,              // 2 + 2 + 4 + 16
+            Self::Q8_0 => 34,              // 2 (scale) + 32 (8-bit × 32)
+            Self::Q8_1 => 40,              // 4 (f32 scale) + 4 (f32 min) + 32
             Self::Q2K => 256 / 4 + 16 + 1, // approximate
             Self::Q3K => 256 * 3 / 8 + 12 + 2,
-            Self::Q4K => 144,   // 2 + 2 + 12 + 128
-            Self::Q5K => 176,   // 2 + 2 + 12 + 160
-            Self::Q6K => 210,   // 2 + 128 + 64 + 16
-            Self::Q8K => 292,   // 4 + 256 + 32
+            Self::Q4K => 144, // 2 + 2 + 12 + 128
+            Self::Q5K => 176, // 2 + 2 + 12 + 160
+            Self::Q6K => 210, // 2 + 128 + 64 + 16
+            Self::Q8K => 292, // 4 + 256 + 32
             // IQ types — sizes vary, these are approximate
             _ => 0, // TODO: fill in IQ block sizes
         }
@@ -118,7 +118,14 @@ impl GGMLType {
     pub fn is_quantized(&self) -> bool {
         !matches!(
             self,
-            Self::F32 | Self::F16 | Self::BF16 | Self::F64 | Self::I8 | Self::I16 | Self::I32 | Self::I64
+            Self::F32
+                | Self::F16
+                | Self::BF16
+                | Self::F64
+                | Self::I8
+                | Self::I16
+                | Self::I32
+                | Self::I64
         )
     }
 

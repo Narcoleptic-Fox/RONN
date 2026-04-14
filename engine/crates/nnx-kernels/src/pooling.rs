@@ -33,13 +33,17 @@ pub fn max_pool2d_f32(
                             let iw = (ow * stride_w + fw) as isize - pad_w as isize;
 
                             if ih >= 0 && (ih as usize) < h && iw >= 0 && (iw as usize) < w {
-                                let idx = n * channels * h * w + c * h * w + ih as usize * w + iw as usize;
+                                let idx = n * channels * h * w
+                                    + c * h * w
+                                    + ih as usize * w
+                                    + iw as usize;
                                 max_val = max_val.max(input[idx]);
                             }
                         }
                     }
 
-                    let out_idx = n * channels * h_out * w_out + c * h_out * w_out + oh * w_out + ow;
+                    let out_idx =
+                        n * channels * h_out * w_out + c * h_out * w_out + oh * w_out + ow;
                     output[out_idx] = max_val;
                 }
             }
@@ -78,14 +82,18 @@ pub fn avg_pool2d_f32(
                             let iw = (ow * stride_w + fw) as isize - pad_w as isize;
 
                             if ih >= 0 && (ih as usize) < h && iw >= 0 && (iw as usize) < w {
-                                let idx = n * channels * h * w + c * h * w + ih as usize * w + iw as usize;
+                                let idx = n * channels * h * w
+                                    + c * h * w
+                                    + ih as usize * w
+                                    + iw as usize;
                                 sum += input[idx];
                                 count += 1;
                             }
                         }
                     }
 
-                    let out_idx = n * channels * h_out * w_out + c * h_out * w_out + oh * w_out + ow;
+                    let out_idx =
+                        n * channels * h_out * w_out + c * h_out * w_out + oh * w_out + ow;
                     output[out_idx] = if count > 0 { sum / count as f32 } else { 0.0 };
                 }
             }
@@ -122,18 +130,22 @@ pub fn global_avg_pool_f32_checked(
     let expected_in = batch_size * channels * spatial_size;
     let expected_out = batch_size * channels;
     if input.len() != expected_in {
-        return Err(EngineError::ShapeMismatch(
-            format!("global_avg_pool: input.len()={} but expected {}", input.len(), expected_in)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "global_avg_pool: input.len()={} but expected {}",
+            input.len(),
+            expected_in
+        )));
     }
     if output.len() != expected_out {
-        return Err(EngineError::ShapeMismatch(
-            format!("global_avg_pool: output.len()={} but expected {}", output.len(), expected_out)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "global_avg_pool: output.len()={} but expected {}",
+            output.len(),
+            expected_out
+        )));
     }
     if spatial_size == 0 {
         return Err(EngineError::ShapeMismatch(
-            "global_avg_pool: spatial_size must be non-zero".to_string()
+            "global_avg_pool: spatial_size must be non-zero".to_string(),
         ));
     }
     global_avg_pool_f32(input, output, batch_size, channels, spatial_size);

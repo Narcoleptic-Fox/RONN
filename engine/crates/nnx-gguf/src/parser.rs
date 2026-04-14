@@ -41,7 +41,9 @@ impl GGUFFile {
 
         let data = &mmap[..];
         if data.len() < 16 {
-            return Err(EngineError::ModelLoad("file too small for GGUF header".into()));
+            return Err(EngineError::ModelLoad(
+                "file too small for GGUF header".into(),
+            ));
         }
 
         // Parse header
@@ -93,9 +95,10 @@ impl GGUFFile {
 
     /// Get raw bytes for a tensor by name.
     pub fn tensor_data(&self, name: &str) -> Result<&[u8]> {
-        let info = self.tensors.get(name).ok_or_else(|| {
-            EngineError::ModelLoad(format!("tensor not found: {}", name))
-        })?;
+        let info = self
+            .tensors
+            .get(name)
+            .ok_or_else(|| EngineError::ModelLoad(format!("tensor not found: {}", name)))?;
         let start = self.data_offset + info.offset as usize;
         let numel = info.numel() as usize;
         let block_numel = info.dtype.block_numel();
@@ -125,11 +128,7 @@ impl GGUFFile {
 
     // -- Private parsing methods --
 
-    fn parse_metadata(
-        data: &[u8],
-        cursor: &mut usize,
-        count: usize,
-    ) -> Result<GGUFMetadata> {
+    fn parse_metadata(data: &[u8], cursor: &mut usize, count: usize) -> Result<GGUFMetadata> {
         let mut metadata = GGUFMetadata::new();
         for _ in 0..count {
             let key = Self::read_string(data, cursor)?;
@@ -193,7 +192,9 @@ impl GGUFFile {
     fn read_string(data: &[u8], cursor: &mut usize) -> Result<String> {
         let len = Self::read_u64(data, cursor)? as usize;
         if *cursor + len > data.len() {
-            return Err(EngineError::ModelLoad("unexpected EOF reading string".into()));
+            return Err(EngineError::ModelLoad(
+                "unexpected EOF reading string".into(),
+            ));
         }
         let s = std::str::from_utf8(&data[*cursor..*cursor + len])
             .map_err(|e| EngineError::ModelLoad(format!("invalid UTF-8 in metadata: {}", e)))?
@@ -210,16 +211,19 @@ impl GGUFFile {
 
         match vtype {
             GGUFValueType::Uint8 => {
-                let v = data.get(*cursor).copied().ok_or_else(|| {
-                    EngineError::ModelLoad("EOF reading u8".into())
-                })?;
+                let v = data
+                    .get(*cursor)
+                    .copied()
+                    .ok_or_else(|| EngineError::ModelLoad("EOF reading u8".into()))?;
                 *cursor += 1;
                 Ok(GGUFValue::Uint8(v))
             }
             GGUFValueType::Int8 => {
-                let v = data.get(*cursor).copied().ok_or_else(|| {
-                    EngineError::ModelLoad("EOF reading i8".into())
-                })? as i8;
+                let v = data
+                    .get(*cursor)
+                    .copied()
+                    .ok_or_else(|| EngineError::ModelLoad("EOF reading i8".into()))?
+                    as i8;
                 *cursor += 1;
                 Ok(GGUFValue::Int8(v))
             }
@@ -243,9 +247,10 @@ impl GGUFFile {
                 Ok(GGUFValue::Float32(f32::from_bits(bits)))
             }
             GGUFValueType::Bool => {
-                let v = data.get(*cursor).copied().ok_or_else(|| {
-                    EngineError::ModelLoad("EOF reading bool".into())
-                })?;
+                let v = data
+                    .get(*cursor)
+                    .copied()
+                    .ok_or_else(|| EngineError::ModelLoad("EOF reading bool".into()))?;
                 *cursor += 1;
                 Ok(GGUFValue::Bool(v != 0))
             }
@@ -277,14 +282,21 @@ impl GGUFFile {
 
     fn read_array_element(data: &[u8], cursor: &mut usize, elem_type: u32) -> Result<GGUFValue> {
         match elem_type {
-            0 => { let v = data[*cursor]; *cursor += 1; Ok(GGUFValue::Uint8(v)) }
+            0 => {
+                let v = data[*cursor];
+                *cursor += 1;
+                Ok(GGUFValue::Uint8(v))
+            }
             4 => Ok(GGUFValue::Uint32(Self::read_u32(data, cursor)?)),
             5 => Ok(GGUFValue::Int32(Self::read_u32(data, cursor)? as i32)),
-            6 => Ok(GGUFValue::Float32(f32::from_bits(Self::read_u32(data, cursor)?))),
+            6 => Ok(GGUFValue::Float32(f32::from_bits(Self::read_u32(
+                data, cursor,
+            )?))),
             8 => Ok(GGUFValue::String(Self::read_string(data, cursor)?)),
             10 => Ok(GGUFValue::Uint64(Self::read_u64(data, cursor)?)),
             _ => Err(EngineError::UnsupportedFormat(format!(
-                "unsupported array element type: {}", elem_type
+                "unsupported array element type: {}",
+                elem_type
             ))),
         }
     }
@@ -373,7 +385,8 @@ mod tests {
 
         // Align to boundary for tensor data
         let current = buf.len();
-        let aligned = (current + effective_alignment - 1) / effective_alignment * effective_alignment;
+        let aligned =
+            (current + effective_alignment - 1) / effective_alignment * effective_alignment;
         buf.resize(aligned, 0u8);
 
         // Write raw tensor data
@@ -544,7 +557,12 @@ mod tests {
     fn test_parse_tensor_info() {
         // F32 = GGMLType::F32 = 0, 2x3 tensor = 6 elements * 4 bytes = 24 bytes
         let tensor_data = vec![0u8; 24];
-        let tensors = [("my_tensor", [2u64, 3].as_slice(), 0u32, tensor_data.as_slice())];
+        let tensors = [(
+            "my_tensor",
+            [2u64, 3].as_slice(),
+            0u32,
+            tensor_data.as_slice(),
+        )];
         let bytes = build_gguf_bytes(3, &[], &tensors, None);
         let path = write_temp_file("tensor_info.gguf", &bytes);
         let result = GGUFFile::open(&path);
@@ -569,7 +587,12 @@ mod tests {
         // Create a 1x4 F32 tensor with known values
         let values: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0];
         let tensor_data: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
-        let tensors = [("weights", [1u64, 4].as_slice(), 0u32, tensor_data.as_slice())];
+        let tensors = [(
+            "weights",
+            [1u64, 4].as_slice(),
+            0u32,
+            tensor_data.as_slice(),
+        )];
         let bytes = build_gguf_bytes(3, &[], &tensors, None);
         let path = write_temp_file("tensor_data.gguf", &bytes);
         let result = GGUFFile::open(&path);
@@ -948,7 +971,12 @@ mod tests {
             ("llama.block_count", 4u32, 32u32.to_le_bytes().to_vec()),
         ];
         let tensor_data = vec![0u8; 16]; // 4-element F32
-        let tensors = [("blk.0.attn_q.weight", [4u64].as_slice(), 0u32, tensor_data.as_slice())];
+        let tensors = [(
+            "blk.0.attn_q.weight",
+            [4u64].as_slice(),
+            0u32,
+            tensor_data.as_slice(),
+        )];
         let bytes = build_gguf_bytes(3, &meta, &tensors, None);
         let path = write_temp_file("meta_tensors.gguf", &bytes);
         let result = GGUFFile::open(&path);
@@ -963,7 +991,9 @@ mod tests {
 
         // Verify tensor
         assert_eq!(gguf.tensors.len(), 1);
-        let data = gguf.tensor_data("blk.0.attn_q.weight").expect("should read tensor");
+        let data = gguf
+            .tensor_data("blk.0.attn_q.weight")
+            .expect("should read tensor");
         assert_eq!(data.len(), 16);
     }
 
@@ -974,7 +1004,12 @@ mod tests {
     fn test_3d_tensor_shape() {
         // 2x3x4 F32 tensor = 24 elements = 96 bytes
         let tensor_data = vec![0u8; 96];
-        let tensors = [("cube", [2u64, 3, 4].as_slice(), 0u32, tensor_data.as_slice())];
+        let tensors = [(
+            "cube",
+            [2u64, 3, 4].as_slice(),
+            0u32,
+            tensor_data.as_slice(),
+        )];
         let bytes = build_gguf_bytes(3, &[], &tensors, None);
         let path = write_temp_file("3d_tensor.gguf", &bytes);
         let result = GGUFFile::open(&path);

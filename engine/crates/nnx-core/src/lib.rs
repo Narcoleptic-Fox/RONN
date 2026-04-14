@@ -15,7 +15,7 @@ pub use device::{Device, DeviceId};
 pub use dtype::DType;
 pub use engine::{
     GenerationOutput, InferenceEngine, KVCacheAccess, LoadConfig, ModelHandle, ModelInfo,
-    TokenBatch,
+    RequestHandle, TokenBatch,
 };
 pub use error::{EngineError, Result};
 pub use shape::Shape;

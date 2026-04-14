@@ -219,10 +219,27 @@ pub fn matvec_quantized<'a>(
         });
     } else {
         let mut row_buf = vec![0.0f32; k];
-        for i in 0..m {
-            nnx_quant::dequant::dequantize(row_data(i), dtype, &mut row_buf);
-            y[i] = dot_f32(&row_buf, x);
-        }
+        matvec_quantized_with_scratch(row_data, x, y, m, k, dtype, &mut row_buf);
+    }
+}
+
+/// Sequential quantized matrix-vector multiply that reuses caller-provided row scratch.
+pub fn matvec_quantized_with_scratch<'a>(
+    row_data: impl Fn(usize) -> &'a [u8],
+    x: &[f32],
+    y: &mut [f32],
+    m: usize,
+    k: usize,
+    dtype: nnx_quant::GGMLType,
+    row_buf: &mut [f32],
+) {
+    debug_assert_eq!(x.len(), k);
+    debug_assert_eq!(y.len(), m);
+    debug_assert_eq!(row_buf.len(), k);
+
+    for i in 0..m {
+        nnx_quant::dequant::dequantize(row_data(i), dtype, row_buf);
+        y[i] = dot_f32(row_buf, x);
     }
 }
 
@@ -233,29 +250,43 @@ pub fn matvec_quantized<'a>(
 /// Checked version of `dot_f32` that validates equal lengths.
 pub fn dot_f32_checked(a: &[f32], b: &[f32]) -> nnx_core::error::Result<f32> {
     if a.len() != b.len() {
-        return Err(EngineError::ShapeMismatch(
-            format!("dot: a.len()={} != b.len()={}", a.len(), b.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "dot: a.len()={} != b.len()={}",
+            a.len(),
+            b.len()
+        )));
     }
     Ok(dot_f32(a, b))
 }
 
 /// Checked version of `matvec_f32` that validates dimensions before computing.
-pub fn matvec_f32_checked(a: &[f32], x: &[f32], y: &mut [f32], m: usize, k: usize) -> nnx_core::error::Result<()> {
+pub fn matvec_f32_checked(
+    a: &[f32],
+    x: &[f32],
+    y: &mut [f32],
+    m: usize,
+    k: usize,
+) -> nnx_core::error::Result<()> {
     if a.len() != m * k {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec: a.len()={} but m*k={}", a.len(), m * k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec: a.len()={} but m*k={}",
+            a.len(),
+            m * k
+        )));
     }
     if x.len() != k {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec: x.len()={} but k={}", x.len(), k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec: x.len()={} but k={}",
+            x.len(),
+            k
+        )));
     }
     if y.len() != m {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec: y.len()={} but m={}", y.len(), m)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec: y.len()={} but m={}",
+            y.len(),
+            m
+        )));
     }
     matvec_f32(a, x, y, m, k);
     Ok(())
@@ -263,27 +294,40 @@ pub fn matvec_f32_checked(a: &[f32], x: &[f32], y: &mut [f32], m: usize, k: usiz
 
 /// Checked version of `matvec_bias_f32` that validates dimensions before computing.
 pub fn matvec_bias_f32_checked(
-    a: &[f32], x: &[f32], bias: &[f32], y: &mut [f32], m: usize, k: usize,
+    a: &[f32],
+    x: &[f32],
+    bias: &[f32],
+    y: &mut [f32],
+    m: usize,
+    k: usize,
 ) -> nnx_core::error::Result<()> {
     if a.len() != m * k {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec_bias: a.len()={} but m*k={}", a.len(), m * k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec_bias: a.len()={} but m*k={}",
+            a.len(),
+            m * k
+        )));
     }
     if x.len() != k {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec_bias: x.len()={} but k={}", x.len(), k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec_bias: x.len()={} but k={}",
+            x.len(),
+            k
+        )));
     }
     if bias.len() != m {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec_bias: bias.len()={} but m={}", bias.len(), m)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec_bias: bias.len()={} but m={}",
+            bias.len(),
+            m
+        )));
     }
     if y.len() != m {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec_bias: y.len()={} but m={}", y.len(), m)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec_bias: y.len()={} but m={}",
+            y.len(),
+            m
+        )));
     }
     matvec_bias_f32(a, x, bias, y, m, k);
     Ok(())
@@ -291,22 +335,33 @@ pub fn matvec_bias_f32_checked(
 
 /// Checked version of `matmul_f32` that validates dimensions before computing.
 pub fn matmul_f32_checked(
-    a: &[f32], b: &[f32], c: &mut [f32], m: usize, k: usize, n: usize,
+    a: &[f32],
+    b: &[f32],
+    c: &mut [f32],
+    m: usize,
+    k: usize,
+    n: usize,
 ) -> nnx_core::error::Result<()> {
     if a.len() != m * k {
-        return Err(EngineError::ShapeMismatch(
-            format!("matmul: a.len()={} but m*k={}", a.len(), m * k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matmul: a.len()={} but m*k={}",
+            a.len(),
+            m * k
+        )));
     }
     if b.len() != k * n {
-        return Err(EngineError::ShapeMismatch(
-            format!("matmul: b.len()={} but k*n={}", b.len(), k * n)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matmul: b.len()={} but k*n={}",
+            b.len(),
+            k * n
+        )));
     }
     if c.len() != m * n {
-        return Err(EngineError::ShapeMismatch(
-            format!("matmul: c.len()={} but m*n={}", c.len(), m * n)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matmul: c.len()={} but m*n={}",
+            c.len(),
+            m * n
+        )));
     }
     matmul_f32(a, b, c, m, k, n);
     Ok(())
@@ -322,14 +377,18 @@ pub fn matvec_quantized_checked<'a>(
     dtype: nnx_quant::GGMLType,
 ) -> nnx_core::error::Result<()> {
     if x.len() != k {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec_quantized: x.len()={} but k={}", x.len(), k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec_quantized: x.len()={} but k={}",
+            x.len(),
+            k
+        )));
     }
     if y.len() != m {
-        return Err(EngineError::ShapeMismatch(
-            format!("matvec_quantized: y.len()={} but m={}", y.len(), m)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "matvec_quantized: y.len()={} but m={}",
+            y.len(),
+            m
+        )));
     }
     matvec_quantized(row_data, x, y, m, k, dtype);
     Ok(())
@@ -358,7 +417,8 @@ mod tests {
         assert!(
             (simd_result - scalar_result).abs() < 1.0,
             "SIMD ({}) vs scalar ({}) mismatch",
-            simd_result, scalar_result
+            simd_result,
+            scalar_result
         );
     }
 
@@ -396,7 +456,9 @@ mod tests {
             assert!(
                 (y[i] - expected).abs() < 1e-3,
                 "row {}: got {}, expected {}",
-                i, y[i], expected
+                i,
+                y[i],
+                expected
             );
         }
     }

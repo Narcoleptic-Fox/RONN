@@ -26,15 +26,20 @@ pub fn rope_f32(x: &mut [f32], position: usize, freq_base: f32) {
 }
 
 /// Checked version of `rope_f32` that validates head_dim is even.
-pub fn rope_f32_checked(x: &mut [f32], position: usize, freq_base: f32) -> nnx_core::error::Result<()> {
+pub fn rope_f32_checked(
+    x: &mut [f32],
+    position: usize,
+    freq_base: f32,
+) -> nnx_core::error::Result<()> {
     if x.len() % 2 != 0 {
-        return Err(EngineError::ShapeMismatch(
-            format!("rope: head_dim must be even, got {}", x.len())
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "rope: head_dim must be even, got {}",
+            x.len()
+        )));
     }
     if x.is_empty() {
         return Err(EngineError::ShapeMismatch(
-            "rope: input must be non-empty".to_string()
+            "rope: input must be non-empty".to_string(),
         ));
     }
     rope_f32(x, position, freq_base);

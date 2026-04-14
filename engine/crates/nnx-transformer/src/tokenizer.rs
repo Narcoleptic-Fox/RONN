@@ -49,24 +49,27 @@ impl Tokenizer {
     /// Build a tokenizer from GGUF metadata.
     pub fn from_gguf(metadata: &nnx_gguf::GGUFMetadata) -> Result<Self, String> {
         // Extract vocabulary
-        let tokens_val = metadata.get("tokenizer.ggml.tokens")
+        let tokens_val = metadata
+            .get("tokenizer.ggml.tokens")
             .ok_or("missing tokenizer.ggml.tokens")?;
 
         let vocab: Vec<String> = match tokens_val {
-            nnx_gguf::types::GGUFValue::Array(arr) => {
-                arr.iter().map(|v| match v {
+            nnx_gguf::types::GGUFValue::Array(arr) => arr
+                .iter()
+                .map(|v| match v {
                     nnx_gguf::types::GGUFValue::String(s) => s.clone(),
                     _ => String::new(),
-                }).collect()
-            }
+                })
+                .collect(),
             _ => return Err("tokenizer.ggml.tokens is not an array".into()),
         };
 
         // Extract merges (optional — some tokenizers don't have explicit merges)
         let merges = if let Some(merges_val) = metadata.get("tokenizer.ggml.merges") {
             match merges_val {
-                nnx_gguf::types::GGUFValue::Array(arr) => {
-                    arr.iter().filter_map(|v| match v {
+                nnx_gguf::types::GGUFValue::Array(arr) => arr
+                    .iter()
+                    .filter_map(|v| match v {
                         nnx_gguf::types::GGUFValue::String(s) => {
                             let parts: Vec<&str> = s.splitn(2, ' ').collect();
                             if parts.len() == 2 {
@@ -76,8 +79,8 @@ impl Tokenizer {
                             }
                         }
                         _ => None,
-                    }).collect()
-                }
+                    })
+                    .collect(),
                 _ => Vec::new(),
             }
         } else {
@@ -85,10 +88,12 @@ impl Tokenizer {
         };
 
         // Special tokens
-        let bos_id = metadata.get("tokenizer.ggml.bos_token_id")
+        let bos_id = metadata
+            .get("tokenizer.ggml.bos_token_id")
             .and_then(|v| v.as_u32())
             .unwrap_or(1);
-        let eos_id = metadata.get("tokenizer.ggml.eos_token_id")
+        let eos_id = metadata
+            .get("tokenizer.ggml.eos_token_id")
             .and_then(|v| v.as_u32())
             .unwrap_or(2);
 
@@ -104,19 +109,21 @@ impl Tokenizer {
         }
 
         // Start with individual bytes/characters as pieces
-        let mut pieces: Vec<String> = text.bytes()
-            .map(|b| self.byte_to_piece(b))
-            .collect();
+        let mut pieces: Vec<String> = text.bytes().map(|b| self.byte_to_piece(b)).collect();
 
         // Build merge priority lookup (owned keys for lifetime safety)
-        let merge_priority: HashMap<(String, String), usize> = self.merges.iter()
+        let merge_priority: HashMap<(String, String), usize> = self
+            .merges
+            .iter()
             .enumerate()
             .map(|(i, (a, b))| ((a.clone(), b.clone()), i))
             .collect();
 
         // Iteratively apply the highest-priority merge
         loop {
-            if pieces.len() < 2 { break; }
+            if pieces.len() < 2 {
+                break;
+            }
 
             // Find the merge with the lowest index (highest priority)
             let mut best_idx = None;
@@ -143,9 +150,12 @@ impl Tokenizer {
         }
 
         // Convert pieces to token IDs
-        pieces.iter()
+        pieces
+            .iter()
             .map(|piece| {
-                self.token_to_id.get(piece).copied()
+                self.token_to_id
+                    .get(piece)
+                    .copied()
                     .unwrap_or(self.unknown_token_id)
             })
             .collect()
@@ -168,7 +178,10 @@ impl Tokenizer {
 
     /// Get the string piece for a token ID.
     pub fn id_to_piece(&self, id: u32) -> &str {
-        self.vocab.get(id as usize).map(|s| s.as_str()).unwrap_or("<unk>")
+        self.vocab
+            .get(id as usize)
+            .map(|s| s.as_str())
+            .unwrap_or("<unk>")
     }
 
     /// Vocabulary size.
@@ -209,10 +222,18 @@ mod tests {
 
     fn simple_tokenizer() -> Tokenizer {
         let vocab = vec![
-            "<unk>".into(), "<s>".into(), "</s>".into(),
-            "h".into(), "e".into(), "l".into(), "o".into(),
-            "he".into(), "ll".into(), "lo".into(),
-            "hel".into(), "hello".into(),
+            "<unk>".into(),
+            "<s>".into(),
+            "</s>".into(),
+            "h".into(),
+            "e".into(),
+            "l".into(),
+            "o".into(),
+            "he".into(),
+            "ll".into(),
+            "lo".into(),
+            "hel".into(),
+            "hello".into(),
         ];
         // Merge priority matters: l+o must come before l+l so "hello" can fully merge.
         // h,e,l,l,o → he,l,l,o → he,l,lo → hel,lo → hello

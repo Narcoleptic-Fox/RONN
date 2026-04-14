@@ -86,30 +86,40 @@ pub fn cross_attention_f32_checked(
     mask: Option<&[bool]>,
 ) -> nnx_core::error::Result<()> {
     if q.len() != seq_q * d_k {
-        return Err(EngineError::ShapeMismatch(
-            format!("cross_attention: q.len()={} but seq_q*d_k={}", q.len(), seq_q * d_k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "cross_attention: q.len()={} but seq_q*d_k={}",
+            q.len(),
+            seq_q * d_k
+        )));
     }
     if k.len() != seq_kv * d_k {
-        return Err(EngineError::ShapeMismatch(
-            format!("cross_attention: k.len()={} but seq_kv*d_k={}", k.len(), seq_kv * d_k)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "cross_attention: k.len()={} but seq_kv*d_k={}",
+            k.len(),
+            seq_kv * d_k
+        )));
     }
     if v.len() != seq_kv * d_v {
-        return Err(EngineError::ShapeMismatch(
-            format!("cross_attention: v.len()={} but seq_kv*d_v={}", v.len(), seq_kv * d_v)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "cross_attention: v.len()={} but seq_kv*d_v={}",
+            v.len(),
+            seq_kv * d_v
+        )));
     }
     if output.len() != seq_q * d_v {
-        return Err(EngineError::ShapeMismatch(
-            format!("cross_attention: output.len()={} but seq_q*d_v={}", output.len(), seq_q * d_v)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "cross_attention: output.len()={} but seq_q*d_v={}",
+            output.len(),
+            seq_q * d_v
+        )));
     }
     if let Some(m) = mask {
         if m.len() != seq_q * seq_kv {
-            return Err(EngineError::ShapeMismatch(
-                format!("cross_attention: mask.len()={} but seq_q*seq_kv={}", m.len(), seq_q * seq_kv)
-            ));
+            return Err(EngineError::ShapeMismatch(format!(
+                "cross_attention: mask.len()={} but seq_q*seq_kv={}",
+                m.len(),
+                seq_q * seq_kv
+            )));
         }
     }
     cross_attention_f32(q, k, v, output, seq_q, seq_kv, d_k, d_v, mask);
@@ -185,38 +195,60 @@ pub fn multi_head_cross_attention_f32_checked(
     mask: Option<&[bool]>,
 ) -> nnx_core::error::Result<()> {
     if q.len() != num_heads * seq_q * head_dim {
-        return Err(EngineError::ShapeMismatch(
-            format!("multi_head_cross_attention: q.len()={} but num_heads*seq_q*head_dim={}", q.len(), num_heads * seq_q * head_dim)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "multi_head_cross_attention: q.len()={} but num_heads*seq_q*head_dim={}",
+            q.len(),
+            num_heads * seq_q * head_dim
+        )));
     }
     if k.len() != num_kv_heads * seq_kv * head_dim {
-        return Err(EngineError::ShapeMismatch(
-            format!("multi_head_cross_attention: k.len()={} but num_kv_heads*seq_kv*head_dim={}", k.len(), num_kv_heads * seq_kv * head_dim)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "multi_head_cross_attention: k.len()={} but num_kv_heads*seq_kv*head_dim={}",
+            k.len(),
+            num_kv_heads * seq_kv * head_dim
+        )));
     }
     if v.len() != num_kv_heads * seq_kv * head_dim {
-        return Err(EngineError::ShapeMismatch(
-            format!("multi_head_cross_attention: v.len()={} but num_kv_heads*seq_kv*head_dim={}", v.len(), num_kv_heads * seq_kv * head_dim)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "multi_head_cross_attention: v.len()={} but num_kv_heads*seq_kv*head_dim={}",
+            v.len(),
+            num_kv_heads * seq_kv * head_dim
+        )));
     }
     if output.len() != seq_q * num_heads * head_dim {
-        return Err(EngineError::ShapeMismatch(
-            format!("multi_head_cross_attention: output.len()={} but seq_q*num_heads*head_dim={}", output.len(), seq_q * num_heads * head_dim)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "multi_head_cross_attention: output.len()={} but seq_q*num_heads*head_dim={}",
+            output.len(),
+            seq_q * num_heads * head_dim
+        )));
     }
     if num_kv_heads == 0 || num_heads % num_kv_heads != 0 {
-        return Err(EngineError::ShapeMismatch(
-            format!("multi_head_cross_attention: num_heads={} must be divisible by num_kv_heads={}", num_heads, num_kv_heads)
-        ));
+        return Err(EngineError::ShapeMismatch(format!(
+            "multi_head_cross_attention: num_heads={} must be divisible by num_kv_heads={}",
+            num_heads, num_kv_heads
+        )));
     }
     if let Some(m) = mask {
         if m.len() != seq_q * seq_kv {
-            return Err(EngineError::ShapeMismatch(
-                format!("multi_head_cross_attention: mask.len()={} but seq_q*seq_kv={}", m.len(), seq_q * seq_kv)
-            ));
+            return Err(EngineError::ShapeMismatch(format!(
+                "multi_head_cross_attention: mask.len()={} but seq_q*seq_kv={}",
+                m.len(),
+                seq_q * seq_kv
+            )));
         }
     }
-    multi_head_cross_attention_f32(q, k, v, output, num_heads, num_kv_heads, seq_q, seq_kv, head_dim, mask);
+    multi_head_cross_attention_f32(
+        q,
+        k,
+        v,
+        output,
+        num_heads,
+        num_kv_heads,
+        seq_q,
+        seq_kv,
+        head_dim,
+        mask,
+    );
     Ok(())
 }
 
@@ -313,7 +345,8 @@ mod tests {
         let v = [1.0, 2.0, 3.0, 4.0f32];
         let mut output = [0.0f32; 4];
         // num_heads=3, num_kv_heads=2 => 3 % 2 != 0
-        let result = multi_head_cross_attention_f32_checked(&q, &k, &v, &mut output, 3, 2, 1, 1, 2, None);
+        let result =
+            multi_head_cross_attention_f32_checked(&q, &k, &v, &mut output, 3, 2, 1, 1, 2, None);
         assert!(result.is_err());
     }
 }

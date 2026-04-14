@@ -39,12 +39,13 @@ impl SafeTensorsFile {
 
         let data = &mmap[..];
         if data.len() < 8 {
-            return Err(EngineError::ModelLoad("file too small for SafeTensors header".into()));
+            return Err(EngineError::ModelLoad(
+                "file too small for SafeTensors header".into(),
+            ));
         }
 
         // First 8 bytes: header size as u64 LE
-        let header_size =
-            u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
+        let header_size = u64::from_le_bytes(data[0..8].try_into().unwrap()) as usize;
 
         if 8 + header_size > data.len() {
             return Err(EngineError::ModelLoad("header extends past EOF".into()));
@@ -85,9 +86,10 @@ impl SafeTensorsFile {
 
     /// Get a zero-copy view of a tensor's data.
     pub fn tensor_view(&self, name: &str) -> Result<TensorView<'_>> {
-        let info = self.tensors.get(name).ok_or_else(|| {
-            EngineError::ModelLoad(format!("tensor not found: {}", name))
-        })?;
+        let info = self
+            .tensors
+            .get(name)
+            .ok_or_else(|| EngineError::ModelLoad(format!("tensor not found: {}", name)))?;
         let start = self.data_start + info.data_offsets.0;
         let end = self.data_start + info.data_offsets.1;
         TensorView::new(&self.mmap[start..end], info.shape.clone(), info.dtype)
@@ -123,7 +125,7 @@ impl SafeTensorsFile {
                 return Err(EngineError::UnsupportedFormat(format!(
                     "{}: unknown dtype '{}'",
                     name, other
-                )))
+                )));
             }
         };
 
@@ -188,8 +190,7 @@ mod tests {
             );
         }
 
-        let header_json =
-            serde_json::to_string(&serde_json::Value::Object(header)).unwrap();
+        let header_json = serde_json::to_string(&serde_json::Value::Object(header)).unwrap();
         let header_bytes = header_json.as_bytes();
 
         let mut buf = Vec::new();
@@ -306,9 +307,9 @@ mod tests {
         assert_eq!(st.tensor_names().len(), dtypes_and_sizes.len());
 
         for (name, _, expected_dtype, _) in &dtypes_and_sizes {
-            let info = st.tensor_info(name).unwrap_or_else(|| {
-                panic!("tensor {} not found", name)
-            });
+            let info = st
+                .tensor_info(name)
+                .unwrap_or_else(|| panic!("tensor {} not found", name));
             assert_eq!(info.dtype, *expected_dtype, "dtype mismatch for {}", name);
         }
     }
@@ -581,7 +582,12 @@ mod tests {
             ("vec", "F32", [5usize].as_slice(), d1.as_slice()),
             ("matrix", "F32", [2usize, 3].as_slice(), d2.as_slice()),
             ("cube", "F32", [2usize, 3, 4].as_slice(), d3.as_slice()),
-            ("hypercube", "F32", [2usize, 3, 4, 5].as_slice(), d4.as_slice()),
+            (
+                "hypercube",
+                "F32",
+                [2usize, 3, 4, 5].as_slice(),
+                d4.as_slice(),
+            ),
         ];
 
         let bytes = build_safetensors_bytes(&tensors, false);

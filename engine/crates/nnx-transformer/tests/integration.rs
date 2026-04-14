@@ -51,8 +51,8 @@ fn test_load_real_model() {
     let handle = backend.load_model(&path, &config);
     assert!(handle.is_ok(), "Failed to load model: {:?}", handle.err());
 
-    let handle = handle.unwrap();
-    let info = backend.model_info(handle).unwrap();
+    let model = handle.unwrap();
+    let info = backend.model_info(model).unwrap();
 
     // Basic sanity checks — every model must have these.
     assert!(info.num_layers > 0, "Model should have layers");
@@ -70,28 +70,47 @@ fn test_load_real_model() {
         info.num_parameters as f64 / 1e9
     );
 
-    backend.unload_model(handle).unwrap();
+    backend.unload_model(model).unwrap();
 }
 
 #[test]
 fn test_model_info_complete() {
     let path = require_model!();
     let backend = NnxBackend::new();
-    let handle = backend.load_model(&path, &LoadConfig::default()).unwrap();
-    let info = backend.model_info(handle).unwrap();
+    let model = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let info = backend.model_info(model).unwrap();
 
     // All fields should be populated with reasonable values.
-    assert!(!info.architecture.is_empty(), "architecture must not be empty");
+    assert!(
+        !info.architecture.is_empty(),
+        "architecture must not be empty"
+    );
     assert!(info.num_layers >= 1, "num_layers={}", info.num_layers);
     assert!(info.hidden_dim >= 64, "hidden_dim={}", info.hidden_dim);
     assert!(info.num_heads >= 1, "num_heads={}", info.num_heads);
     assert!(info.num_kv_heads >= 1, "num_kv_heads={}", info.num_kv_heads);
     assert!(info.head_dim >= 1, "head_dim={}", info.head_dim);
-    assert!(info.intermediate_dim >= 1, "intermediate_dim={}", info.intermediate_dim);
+    assert!(
+        info.intermediate_dim >= 1,
+        "intermediate_dim={}",
+        info.intermediate_dim
+    );
     assert!(info.vocab_size >= 100, "vocab_size={}", info.vocab_size);
-    assert!(info.max_context_length >= 128, "max_context_length={}", info.max_context_length);
-    assert!(info.num_parameters > 0, "num_parameters={}", info.num_parameters);
-    assert!(info.file_size_bytes > 0, "file_size_bytes={}", info.file_size_bytes);
+    assert!(
+        info.max_context_length >= 128,
+        "max_context_length={}",
+        info.max_context_length
+    );
+    assert!(
+        info.num_parameters > 0,
+        "num_parameters={}",
+        info.num_parameters
+    );
+    assert!(
+        info.file_size_bytes > 0,
+        "file_size_bytes={}",
+        info.file_size_bytes
+    );
 
     // Dimensional consistency: hidden_dim == num_heads * head_dim
     assert_eq!(
@@ -103,7 +122,7 @@ fn test_model_info_complete() {
         info.head_dim
     );
 
-    backend.unload_model(handle).unwrap();
+    backend.unload_model(model).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -114,12 +133,13 @@ fn test_model_info_complete() {
 fn test_forward_produces_valid_logits() {
     let path = require_model!();
     let backend = NnxBackend::new();
-    let handle = backend.load_model(&path, &LoadConfig::default()).unwrap();
-    let info = backend.model_info(handle).unwrap();
+    let model = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let request = backend.create_request(model).unwrap();
+    let info = backend.model_info(model).unwrap();
 
     // Forward pass with a simple token sequence.
     let input = TokenBatch::single(vec![1, 2, 3], 0);
-    let output = backend.forward(handle, &input).unwrap();
+    let output = backend.forward(request, &input).unwrap();
 
     // Logits shape: [1, vocab_size]
     assert_eq!(
@@ -148,7 +168,8 @@ fn test_forward_produces_valid_logits() {
     assert!(max < 1000.0, "Logits exploded: max={}", max);
     assert!(min > -1000.0, "Logits exploded: min={}", min);
 
-    backend.unload_model(handle).unwrap();
+    backend.drop_request(request).unwrap();
+    backend.unload_model(model).unwrap();
 }
 
 #[test]
@@ -157,15 +178,19 @@ fn test_forward_deterministic() {
     let backend = NnxBackend::new();
 
     // Run 1
-    let handle1 = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let model1 = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let request1 = backend.create_request(model1).unwrap();
     let input = TokenBatch::single(vec![1, 2, 3], 0);
-    let out1 = backend.forward(handle1, &input).unwrap();
-    backend.unload_model(handle1).unwrap();
+    let out1 = backend.forward(request1, &input).unwrap();
+    backend.drop_request(request1).unwrap();
+    backend.unload_model(model1).unwrap();
 
     // Run 2 (fresh load — new KV cache)
-    let handle2 = backend.load_model(&path, &LoadConfig::default()).unwrap();
-    let out2 = backend.forward(handle2, &input).unwrap();
-    backend.unload_model(handle2).unwrap();
+    let model2 = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let request2 = backend.create_request(model2).unwrap();
+    let out2 = backend.forward(request2, &input).unwrap();
+    backend.drop_request(request2).unwrap();
+    backend.unload_model(model2).unwrap();
 
     let d1 = out1.logits.as_f32();
     let d2 = out2.logits.as_f32();
@@ -189,22 +214,23 @@ fn test_forward_deterministic() {
 fn test_sequential_tokens_update_cache() {
     let path = require_model!();
     let backend = NnxBackend::new();
-    let handle = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let model = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let request = backend.create_request(model).unwrap();
 
     // First token
     let input1 = TokenBatch::single(vec![1], 0);
-    let out1 = backend.forward(handle, &input1).unwrap();
+    let out1 = backend.forward(request, &input1).unwrap();
     assert_eq!(
-        backend.cache_tokens(handle).unwrap(),
+        backend.cache_tokens(request).unwrap(),
         1,
         "cache should hold 1 token after first forward"
     );
 
     // Second token (incremental decode)
     let input2 = TokenBatch::single(vec![2], 1);
-    let out2 = backend.forward(handle, &input2).unwrap();
+    let out2 = backend.forward(request, &input2).unwrap();
     assert_eq!(
-        backend.cache_tokens(handle).unwrap(),
+        backend.cache_tokens(request).unwrap(),
         2,
         "cache should hold 2 tokens after second forward"
     );
@@ -212,38 +238,38 @@ fn test_sequential_tokens_update_cache() {
     // Logits should differ (different context).
     let d1 = out1.logits.as_f32();
     let d2 = out2.logits.as_f32();
-    assert!(
-        d1 != d2,
-        "Different tokens should produce different logits"
-    );
+    assert!(d1 != d2, "Different tokens should produce different logits");
 
-    backend.unload_model(handle).unwrap();
+    backend.drop_request(request).unwrap();
+    backend.unload_model(model).unwrap();
 }
 
 #[test]
 fn test_cache_clear() {
     let path = require_model!();
     let backend = NnxBackend::new();
-    let handle = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let model = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let request = backend.create_request(model).unwrap();
 
     // Process some tokens.
     backend
-        .forward(handle, &TokenBatch::single(vec![1, 2, 3], 0))
+        .forward(request, &TokenBatch::single(vec![1, 2, 3], 0))
         .unwrap();
     assert!(
-        backend.cache_tokens(handle).unwrap() > 0,
+        backend.cache_tokens(request).unwrap() > 0,
         "cache should be non-empty after forward"
     );
 
     // Clear and verify.
-    backend.cache_clear(handle).unwrap();
+    backend.cache_clear(request).unwrap();
     assert_eq!(
-        backend.cache_tokens(handle).unwrap(),
+        backend.cache_tokens(request).unwrap(),
         0,
         "cache should be empty after clear"
     );
 
-    backend.unload_model(handle).unwrap();
+    backend.drop_request(request).unwrap();
+    backend.unload_model(model).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +280,7 @@ fn test_cache_clear() {
 fn test_generate_text() {
     let path = require_model!();
     let backend = NnxBackend::new();
-    let handle = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let model = backend.load_model(&path, &LoadConfig::default()).unwrap();
 
     let config = GenerateConfig {
         max_tokens: 20,
@@ -264,7 +290,7 @@ fn test_generate_text() {
     };
 
     // generate_text requires an embedded tokenizer — GGUF models usually have one.
-    let result = backend.generate_text(handle, "Hello", &config);
+    let result = backend.generate_text(model, "Hello", &config);
     match result {
         Ok(text) => {
             println!("Generated: {}", text);
@@ -280,7 +306,7 @@ fn test_generate_text() {
         }
     }
 
-    backend.unload_model(handle).unwrap();
+    backend.unload_model(model).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -298,10 +324,7 @@ fn test_memory_budget_rejection() {
         ..LoadConfig::default()
     };
     let result = backend.load_model(&path, &config);
-    assert!(
-        result.is_err(),
-        "Loading with 1-byte budget should fail"
-    );
+    assert!(result.is_err(), "Loading with 1-byte budget should fail");
     let err_msg = format!("{}", result.unwrap_err());
     assert!(
         err_msg.contains("memory budget"),
@@ -333,7 +356,8 @@ fn test_memory_budget_zero_unlimited() {
 fn test_generation_speed() {
     let path = require_model!();
     let backend = NnxBackend::new();
-    let handle = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let model = backend.load_model(&path, &LoadConfig::default()).unwrap();
+    let request = backend.create_request(model).unwrap();
 
     let config = GenerateConfig {
         max_tokens: 50,
@@ -343,7 +367,7 @@ fn test_generation_speed() {
     };
 
     let start = std::time::Instant::now();
-    let result = backend.generate_text(handle, "The quick brown fox", &config);
+    let result = backend.generate_text(model, "The quick brown fox", &config);
     let elapsed = start.elapsed();
 
     match result {
@@ -358,14 +382,14 @@ fn test_generation_speed() {
         }
         Err(_) => {
             // No tokenizer — measure raw forward speed instead.
-            let info = backend.model_info(handle).unwrap();
-            backend.cache_clear(handle).unwrap();
+            let info = backend.model_info(model).unwrap();
+            backend.cache_clear(request).unwrap();
 
             let token_count = 50usize;
             let start = std::time::Instant::now();
             for i in 0..token_count {
                 let input = TokenBatch::single(vec![(i + 1) as u32], i);
-                backend.forward(handle, &input).unwrap();
+                backend.forward(request, &input).unwrap();
             }
             let elapsed = start.elapsed();
             println!(
@@ -379,5 +403,6 @@ fn test_generation_speed() {
         }
     }
 
-    backend.unload_model(handle).unwrap();
+    backend.drop_request(request).unwrap();
+    backend.unload_model(model).unwrap();
 }
