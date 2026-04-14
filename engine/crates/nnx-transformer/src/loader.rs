@@ -362,10 +362,29 @@ pub fn load_safetensors(path: &Path) -> Result<Model, String> {
 }
 
 /// Load a SafeTensors model with memory budget enforcement.
+///
+/// Automatically detects multi-file (sharded) models via model.safetensors.index.json
+/// and routes tensor loads to the correct shard file.
 pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result<Model, String> {
     use nnx_safetensors::SafeTensorsFile;
 
     info!("Loading SafeTensors model from {}", path.display());
+
+    // Check for a multi-file shard index before opening the path as a single file.
+    match load_shard_index(path) {
+        Ok(Some(shard_idx)) => {
+            info!(
+                "Detected sharded model: {} tensors across {} files",
+                shard_idx.tensor_to_file.len(),
+                shard_idx.shard_files.len()
+            );
+            return load_safetensors_sharded(path, &shard_idx, memory_budget);
+        }
+        Ok(None) => {} // single-file model, continue below
+        Err(e) => {
+            warn!("could not read shard index: {} — proceeding as single file", e);
+        }
+    }
 
     let st =
         SafeTensorsFile::open(path).map_err(|e| format!("failed to open SafeTensors: {}", e))?;
@@ -385,8 +404,9 @@ pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result
     }
 
     info!(
-        "Model (inferred): {} — {} layers, hidden={}, heads={}/{}, vocab={}",
+        "Model: {} ({:?}) — {} layers, hidden={}, heads={}/{}, vocab={}",
         config.architecture,
+        config.arch,
         config.num_layers,
         config.hidden_dim,
         config.num_heads,
@@ -394,7 +414,91 @@ pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result
         config.vocab_size,
     );
 
-    let weights = load_safetensors_weights(&st, &config)?;
+    let name_map = WeightNameMap::from_architecture(config.arch.clone());
+    let weights = load_safetensors_weights_with_map(&st, &config, &name_map)?;
+    Ok(Model::new(config, weights))
+}
+
+/// Load a sharded (multi-file) SafeTensors model.
+fn load_safetensors_sharded(
+    model_path: &Path,
+    shard_idx: &crate::weight_names::ShardIndex,
+    memory_budget: usize,
+) -> Result<Model, String> {
+    use std::collections::HashMap;
+    use nnx_safetensors::SafeTensorsFile;
+
+    // Resolve the model directory.
+    let dir = if model_path.is_dir() {
+        model_path.to_path_buf()
+    } else {
+        model_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf()
+    };
+
+    // Use the first shard to probe tensor shapes for config inference.
+    let first_shard = shard_idx
+        .shard_files
+        .first()
+        .ok_or("shard index lists no shard files")?;
+    let first_st = SafeTensorsFile::open(first_shard)
+        .map_err(|e| format!("failed to open shard {}: {}", first_shard.display(), e))?;
+
+    // The index file sits in the same directory as config.json.
+    let index_path = dir.join("model.safetensors.index.json");
+    let config = infer_config_from_safetensors_path(&index_path, &first_st)?;
+    config.validate()?;
+
+    if memory_budget > 0 {
+        let estimated: usize = shard_idx
+            .tensor_to_file
+            .keys()
+            .filter_map(|name| {
+                let shard = shard_idx.tensor_to_file.get(name)?;
+                let st = SafeTensorsFile::open(shard).ok()?;
+                let info = st.tensor_info(name)?;
+                Some(info.shape.numel() * std::mem::size_of::<f32>())
+            })
+            .sum();
+        if estimated > memory_budget {
+            return Err(format!(
+                "model requires ~{:.1} GB but memory budget is {:.1} GB",
+                estimated as f64 / 1e9,
+                memory_budget as f64 / 1e9
+            ));
+        }
+    }
+
+    info!(
+        "Sharded model: {} ({:?}) — {} layers, hidden={}, heads={}/{}, vocab={}",
+        config.architecture,
+        config.arch,
+        config.num_layers,
+        config.hidden_dim,
+        config.num_heads,
+        config.num_kv_heads,
+        config.vocab_size,
+    );
+
+    // Open each shard file once and cache the handle.
+    let mut shard_cache: HashMap<std::path::PathBuf, SafeTensorsFile> = HashMap::new();
+    for shard_path in &shard_idx.shard_files {
+        let st = SafeTensorsFile::open(shard_path)
+            .map_err(|e| format!("failed to open shard {}: {}", shard_path.display(), e))?;
+        shard_cache.insert(shard_path.clone(), st);
+    }
+
+    let name_map = WeightNameMap::from_architecture(config.arch.clone());
+
+    // Build a lookup closure that routes by tensor name to the correct shard.
+    let lookup = |name: &str| -> Option<&SafeTensorsFile> {
+        let shard_path = shard_idx.tensor_to_file.get(name)?;
+        shard_cache.get(shard_path)
+    };
+
+    let weights = load_safetensors_weights_routed(&lookup, &config, &name_map)?;
     Ok(Model::new(config, weights))
 }
 
@@ -516,8 +620,16 @@ fn infer_config_from_adjacent_config(
                 .map(|info| info.shape.dims()[1])
         })
         .ok_or("missing hidden_size")?;
+    // Layer count: prefer explicit field; fall back to probing via architecture-
+    // specific tensor name so GPT-2 and Llama-family both count correctly.
+    let arch_enum_for_probe = crate::weight_names::map_hf_architecture(arch_name)
+        .unwrap_or(Architecture::Llama);
+    let probe_map = WeightNameMap::from_architecture(arch_enum_for_probe);
     let num_layers = json_usize(&value, "num_hidden_layers")
-        .or_else(|| count_st_layers(st))
+        .or_else(|| {
+            let n = probe_map.count_layers(&|name| st.tensor_info(name).is_some());
+            if n > 0 { Some(n) } else { None }
+        })
         .ok_or("missing num_hidden_layers")?;
     let num_heads =
         json_usize(&value, "num_attention_heads").ok_or("missing num_attention_heads")?;
@@ -541,22 +653,6 @@ fn infer_config_from_adjacent_config(
         .or_else(|| json_f32(&value, "layer_norm_epsilon"))
         .unwrap_or(1e-5);
 
-    // For SafeTensors we probe the actual tensor file to detect bias presence
-    // rather than relying solely on profile defaults, since some checkpoints
-    // omit bias even when the architecture spec says it should be present.
-    let has_qkv_bias = if profile.has_qkv_bias {
-        st.tensor_info("model.layers.0.self_attn.q_proj.bias")
-            .is_some()
-    } else {
-        false
-    };
-    let has_output_bias = if profile.has_output_bias {
-        st.tensor_info("model.layers.0.self_attn.o_proj.bias")
-            .is_some()
-    } else {
-        false
-    };
-
     let pos_encoding = build_pos_encoding(profile.pos_encoding_kind, rope_freq_base, head_dim);
     let embedding_scale = if profile.has_embedding_scale {
         Some((hidden_dim as f32).sqrt())
@@ -564,6 +660,25 @@ fn infer_config_from_adjacent_config(
         None
     };
     let arch = crate::config::profile_to_arch_enum(profile, arch_name);
+
+    // Probe the actual checkpoint for bias tensors rather than relying solely
+    // on profile defaults.  Some checkpoints omit bias even when the
+    // architecture spec says it should be present, and probing avoids
+    // errors later when we try to load a bias that isn't there.
+    //
+    // We build the name map *after* we know arch so the probe uses
+    // architecture-correct HF names (e.g., Phi uses qkv_proj not q_proj).
+    let bias_probe_map = WeightNameMap::from_architecture(arch.clone());
+    let has_qkv_bias = if profile.has_qkv_bias {
+        probe_qkv_bias(st, &bias_probe_map)
+    } else {
+        false
+    };
+    let has_output_bias = if profile.has_output_bias {
+        probe_output_bias(st, &bias_probe_map)
+    } else {
+        false
+    };
 
     Ok(Some(ModelConfig {
         architecture: arch_name.to_string(),

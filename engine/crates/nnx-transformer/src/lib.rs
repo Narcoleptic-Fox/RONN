@@ -1,9 +1,12 @@
 //! Transformer model architecture for NNX.
 //!
-//! Supports multiple model architectures: Llama, GPT-2, Phi, Gemma, and Qwen.
+//! Supports multiple model architectures via a data-driven profile registry.
 //! Each architecture can use different normalization (RMSNorm/LayerNorm),
 //! FFN variants (SwiGLU/GeGLU/GELU), position encoding (RoPE/partial RoPE/learned),
 //! and block styles (sequential/parallel).
+//!
+//! Adding a new architecture means adding a new [`config::ArchitectureProfile`]
+//! constant — no dispatch code changes required.
 //!
 //! ## Architecture
 //!
@@ -44,11 +47,16 @@ pub mod loader;
 pub mod model;
 pub mod sampler;
 pub mod tokenizer;
+pub mod weight_names;
 pub mod weights;
 
 pub use backend::NnxBackend;
 pub use cache::KVCache;
-pub use config::{Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding};
+pub use config::{
+    Architecture, ArchitectureProfile, BlockStyle, FFNType, KNOWN_ARCHITECTURES, ModelConfig,
+    NormType, PosEncoding, PosEncodingKind, find_profile_by_gguf, find_profile_by_hf,
+    known_architecture_names,
+};
 pub use generate::{GenerateConfig, GenerateOutput, StopReason, generate};
 pub use model::{Model, ModelWeights};
 pub use sampler::SamplerConfig;
