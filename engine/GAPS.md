@@ -29,11 +29,11 @@ NNX is not yet competitive as a general-purpose inference library because the mo
 | Area                          | Status  | Notes                                                                                  |
 | ----------------------------- | ------- | -------------------------------------------------------------------------------------- |
 | GGUF loading                  | Partial | Works end-to-end with mixed dense/quantized matrix storage; not every tensor stays compact yet. |
-| SafeTensors loading           | Partial | Now reads adjacent `config.json`, supports budget checks, and handles HF decoder-only layouts better, but is still not fully generic. |
-| Transformer execution         | Partial | Single-model CPU execution works; request-scoped KV is in place, prefill is materially improved, and layer-feature plumbing is now batch-safe and one-shot, but serving semantics are still incomplete. |
+| SafeTensors loading           | Closed  | Architecture-aware HF name mapping for 5 families, fused QKV splitting, multi-shard support, config.json inference. |
+| Transformer execution         | Partial | Single-model CPU execution works with true batched causal prefill, request-scoped KV, and batch-safe one-shot layer features, but serving semantics (paged attention, continuous batching) are still missing. |
 | Quantization                  | Partial | GGUF matrix execution now covers token embeddings, projection matrices, and `lm_head`, with scratch-reusing quantized prefill; activations, KV cache, and SafeTensors storage are still dense. |
-| Kernel API safety             | Partial | Public transformer runtime paths now use checked RoPE/norm/cache behavior, but many unchecked kernels still exist elsewhere in `nnx-kernels`. |
-| Architecture support          | Partial | Several architectures are hardcoded, but there is no stable extension model.           |
+| Kernel API safety             | Closed  | Public transformer runtime paths use checked RoPE/norm/cache/attention operations. Unchecked kernels kept for hot-path performance.     |
+| Architecture support          | Closed  | 10 architecture profiles via data-driven registry (Llama, Mistral, CodeLlama, GPT-2, Phi, Gemma, Qwen, StableLM, Falcon, MPT). |
 | ONNX support                  | Missing | Placeholder crate only.                                                                |
 | GGML support                  | Missing | File open works, tensor extraction does not.                                           |
 | Serving/runtime orchestration | Missing | No paged attention, continuous batching, prefix caching, or async runtime model.       |
@@ -57,6 +57,10 @@ These are no longer active gaps and should stay out of the roadmap unless they r
 | Layer-feature serving semantics| Feature extraction state was sticky, weakly validated, and batch-fragile    | Closed for the current API. Requests now arm features one-shot, batch outputs are shape-checked, and batched `forward_layers()` is covered. |
 | Transformer runtime crash paths| RoPE, normalization, and KV cache writes could still crash public runtime calls | Closed for transformer inference. Public transformer paths now use checked RoPE/norm operations and explicit KV cache bounds errors. |
 | Quantized matrix runtime path  | Compact execution stopped at projections and `lm_head`                      | Closed for GGUF matrix weights. Token embeddings are compact too, and quantized batched prefill now reuses scratch instead of reallocating per prompt row. |
+| Advanced samplers              | Only temperature, top-k, top-p, repetition penalty                          | Closed. Min-P, Typical, TFS, and Mirostat v2 implemented with presets (greedy, creative, precise, default_chat). Competitive with llama.cpp sampler surface. |
+| Batched causal prefill         | Prefill walked positions sequentially for causal attention                   | Closed. Full Q*K^T attention score matrix with triangular causal mask, rayon parallel across heads, position-offset-aware for continued generation. |
+| SafeTensors general model path | Loader hardcoded to HF decoder-only Llama-style naming                      | Closed. Architecture-aware WeightNameMap for 5 families (Llama, GPT-2, Phi, Gemma, Qwen), fused QKV splitting, TensorSource trait, multi-file shard support via index.json. |
+| Architecture extension model   | Adding a new architecture required modifying central dispatch match arms     | Closed. Data-driven ArchitectureProfile registry with 10 static const profiles. Adding an architecture is adding a const — no dispatch code changes. Lookup by GGUF name or HF model_type. |
 
 ## Critical Gaps
 
@@ -74,11 +78,8 @@ These are the important gaps already present in the codebase or immediately adja
 
 | Priority | Gap                                      | Status  | Notes                                                                                                                                    |
 | -------- | ---------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| P1       | True batched prefill                     | Partial | Prefill now batches dense projection/FFN work across prompt tokens and quantized matrices reuse scratch instead of reallocating per row, but causal attention still walks positions sequentially. |
-| P1       | SafeTensors as a general model path      | Partial | The loader now reads adjacent `config.json`, infers more architecture detail, and loads optional bias terms, but it still targets HF decoder-only naming rather than arbitrary layouts. |
 | P1       | SafeTensors execution storage            | Partial | SafeTensors tensors still materialize to dense `f32`; compact runtime storage is currently GGUF-first.                                  |
 | P1       | Deeper quantized runtime                 | Partial | Matrix weights now stay compact on the GGUF path, but activations, KV cache, and non-matmul state are still dense runtime structures.  |
-| P1       | Standardized architecture extension path | Partial | Several architectures are hardcoded, but adding a new one still requires touching central dispatch and naming logic.                     |
 | P1       | ONNX loader implementation               | Missing | `nnx-onnx` is still placeholder-only.                                                                                                    |
 | P1       | GGML tensor extraction                   | Missing | `nnx-ggml` opens files but does not parse architecture-specific tensors.                                                                 |
 | P2       | Property-based parser tests              | Partial | Parser coverage is much better, but property-based testing and corpus-driven fuzzing are still missing.                                  |
@@ -104,7 +105,7 @@ These are the features that matter if NNX is meant to compete with current non-R
 
 | Priority | Capability            | Why It Matters                                                                                              |
 | -------- | --------------------- | ----------------------------------------------------------------------------------------------------------- |
-| P1       | Advanced samplers     | Min-P, Typical, TFS, and Mirostat are expected in serious local inference stacks.                           |
+| P1       | Advanced samplers     | Closed. Min-P, Typical, TFS, and Mirostat v2 are implemented with presets. Competitive with llama.cpp.     |
 | P1       | Structured outputs    | Grammar-constrained decoding is already normal in `llama.cpp` and increasingly expected in serving systems. |
 | P1       | LoRA adapter support  | Per-request adapter application is part of current inference-server expectations.                           |
 | P1       | Speculative decoding  | Important for latency competitiveness and should integrate cleanly with layer-feature extraction.           |
@@ -152,8 +153,8 @@ If the goal is to make NNX a serious Rust contender rather than an interesting p
 
 1. Build paged attention, prefix caching, and continuous batching as the serving core.
 2. Add a real GPU/backend abstraction instead of baking CPU assumptions into the current path.
-3. Finish SafeTensors compact execution and deeper quantized runtime work beyond matrix weights.
-4. Add LoRA, structured outputs, and speculative decoding on top of that serving foundation.
+3. Finish SafeTensors compact execution storage and deeper quantized runtime (activations, KV cache). *(SafeTensors loading and architecture extension are now closed.)*
+4. Add LoRA, structured outputs, and speculative decoding on top of that serving foundation. *(Advanced samplers are now closed.)*
 5. Finish ONNX and GGML loader paths.
 6. Expand into encoder-decoder, speech, and multimodal support.
 
