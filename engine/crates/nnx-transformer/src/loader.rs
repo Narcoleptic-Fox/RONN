@@ -6,8 +6,13 @@
 //! Supports architecture-specific tensor names and optional bias loading.
 
 use crate::block::BlockWeights;
-use crate::config::{Architecture, FFNType, ModelConfig, NormType};
+use crate::config::{
+    Architecture, FFNType, ModelConfig, NormType, build_pos_encoding, find_profile_by_hf,
+    known_architecture_names,
+};
 use crate::model::{Model, ModelWeights};
+use crate::weight_names::{WeightNameMap, load_shard_index, split_fused_qkv_bias,
+    split_fused_qkv_weight};
 use crate::weights::Matrix;
 use nnx_gguf::GGUFFile;
 use nnx_quant::GGMLType;
@@ -494,8 +499,16 @@ fn infer_config_from_adjacent_config(
         .or_else(|| value.get("model_type").and_then(|v| v.as_str()))
         .ok_or("config.json missing architecture/model_type")?;
 
-    let arch = map_hf_architecture(arch_name)
-        .ok_or_else(|| format!("unsupported SafeTensors architecture hint: {}", arch_name))?;
+    // Use the profile registry instead of a hardcoded match statement.
+    // Adding support for a new architecture only requires adding a profile to
+    // KNOWN_ARCHITECTURES in config.rs — this function never needs to change.
+    let profile = find_profile_by_hf(arch_name).ok_or_else(|| {
+        format!(
+            "unsupported SafeTensors architecture hint: '{}'. Known architectures: {:?}",
+            arch_name,
+            known_architecture_names()
+        )
+    })?;
 
     let hidden_dim = json_usize(&value, "hidden_size")
         .or_else(|| {
@@ -528,76 +541,29 @@ fn infer_config_from_adjacent_config(
         .or_else(|| json_f32(&value, "layer_norm_epsilon"))
         .unwrap_or(1e-5);
 
-    let (
-        norm_type,
-        ffn_type,
-        pos_encoding,
-        block_style,
-        has_qkv_bias,
-        has_output_bias,
-        embedding_scale,
-    ) = match arch {
-        Architecture::Llama => (
-            NormType::RMSNorm,
-            FFNType::SwiGLU,
-            crate::config::PosEncoding::RoPE {
-                freq_base: rope_freq_base,
-            },
-            crate::config::BlockStyle::Sequential,
-            st.tensor_info("model.layers.0.self_attn.q_proj.bias")
-                .is_some(),
-            st.tensor_info("model.layers.0.self_attn.o_proj.bias")
-                .is_some(),
-            None,
-        ),
-        Architecture::Gemma => (
-            NormType::RMSNorm,
-            FFNType::GeGLU,
-            crate::config::PosEncoding::RoPE {
-                freq_base: rope_freq_base,
-            },
-            crate::config::BlockStyle::Sequential,
-            st.tensor_info("model.layers.0.self_attn.q_proj.bias")
-                .is_some(),
-            st.tensor_info("model.layers.0.self_attn.o_proj.bias")
-                .is_some(),
-            Some((hidden_dim as f32).sqrt()),
-        ),
-        Architecture::Qwen => (
-            NormType::RMSNorm,
-            FFNType::SwiGLU,
-            crate::config::PosEncoding::RoPE {
-                freq_base: rope_freq_base,
-            },
-            crate::config::BlockStyle::Sequential,
-            st.tensor_info("model.layers.0.self_attn.q_proj.bias")
-                .is_some(),
-            st.tensor_info("model.layers.0.self_attn.o_proj.bias")
-                .is_some(),
-            None,
-        ),
-        Architecture::Phi => (
-            NormType::LayerNorm,
-            FFNType::SwiGLU,
-            crate::config::PosEncoding::PartialRoPE {
-                freq_base: rope_freq_base,
-                rotary_dim: head_dim / 2,
-            },
-            crate::config::BlockStyle::Parallel,
-            true,
-            true,
-            None,
-        ),
-        Architecture::GPT2 => (
-            NormType::LayerNorm,
-            FFNType::GELU,
-            crate::config::PosEncoding::Learned,
-            crate::config::BlockStyle::Sequential,
-            true,
-            true,
-            None,
-        ),
+    // For SafeTensors we probe the actual tensor file to detect bias presence
+    // rather than relying solely on profile defaults, since some checkpoints
+    // omit bias even when the architecture spec says it should be present.
+    let has_qkv_bias = if profile.has_qkv_bias {
+        st.tensor_info("model.layers.0.self_attn.q_proj.bias")
+            .is_some()
+    } else {
+        false
     };
+    let has_output_bias = if profile.has_output_bias {
+        st.tensor_info("model.layers.0.self_attn.o_proj.bias")
+            .is_some()
+    } else {
+        false
+    };
+
+    let pos_encoding = build_pos_encoding(profile.pos_encoding_kind, rope_freq_base, head_dim);
+    let embedding_scale = if profile.has_embedding_scale {
+        Some((hidden_dim as f32).sqrt())
+    } else {
+        None
+    };
+    let arch = crate::config::profile_to_arch_enum(profile, arch_name);
 
     Ok(Some(ModelConfig {
         architecture: arch_name.to_string(),
@@ -612,10 +578,10 @@ fn infer_config_from_adjacent_config(
         max_context_length,
         rope_freq_base,
         rms_norm_eps,
-        norm_type,
-        ffn_type,
+        norm_type: profile.norm_type,
+        ffn_type: profile.ffn_type,
         pos_encoding,
-        block_style,
+        block_style: profile.block_style,
         has_qkv_bias,
         has_output_bias,
         embedding_scale,
@@ -1127,22 +1093,6 @@ fn count_st_layers(st: &nnx_safetensors::SafeTensorsFile) -> Option<usize> {
     }
 }
 
-fn map_hf_architecture(name: &str) -> Option<Architecture> {
-    let lowered = name.to_ascii_lowercase();
-    if lowered.contains("llama") || lowered.contains("mistral") {
-        Some(Architecture::Llama)
-    } else if lowered.contains("gemma") {
-        Some(Architecture::Gemma)
-    } else if lowered.contains("qwen") {
-        Some(Architecture::Qwen)
-    } else if lowered.contains("phi") {
-        Some(Architecture::Phi)
-    } else if lowered.contains("gpt2") || lowered.contains("gptj") {
-        Some(Architecture::GPT2)
-    } else {
-        None
-    }
-}
 
 fn json_usize(value: &serde_json::Value, key: &str) -> Option<usize> {
     value.get(key).and_then(|v| v.as_u64()).map(|v| v as usize)

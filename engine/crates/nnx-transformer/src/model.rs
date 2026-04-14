@@ -294,6 +294,36 @@ mod tests {
                 false,
                 None,
             ),
+            // Mistral and CodeLlama share the Llama execution path.
+            Architecture::Mistral | Architecture::CodeLlama => (
+                NormType::RMSNorm,
+                FFNType::SwiGLU,
+                PosEncoding::RoPE { freq_base: 10000.0 },
+                BlockStyle::Sequential,
+                false,
+                false,
+                None,
+            ),
+            // StableLM: LayerNorm + RoPE + SwiGLU + parallel attention.
+            Architecture::StableLM => (
+                NormType::LayerNorm,
+                FFNType::SwiGLU,
+                PosEncoding::RoPE { freq_base: 10000.0 },
+                BlockStyle::Parallel,
+                true,
+                true,
+                None,
+            ),
+            // Falcon and MPT: LayerNorm + MHA + GELU + sequential.
+            Architecture::Falcon | Architecture::MPT => (
+                NormType::LayerNorm,
+                FFNType::GELU,
+                PosEncoding::RoPE { freq_base: 10000.0 },
+                BlockStyle::Sequential,
+                false,
+                false,
+                None,
+            ),
         };
 
         let config = ModelConfig {

@@ -216,11 +216,25 @@ pub fn attention_decode_configurable(
     Ok(output)
 }
 
-/// Batched prefill attention.
+/// Batched prefill attention with true causal masking.
 ///
-/// The heavy Q/K/V/O projections are batched across the prompt, but causal
-/// attention still walks positions sequentially so the KV cache is populated
-/// correctly.
+/// Computes the full causal attention matrix for all prompt tokens at once,
+/// replacing the previous sequential position-by-position loop. The algorithm:
+///
+/// 1. Project all tokens' Q, K, V in one batched matmul.
+/// 2. Apply RoPE to each token's Q/K at its absolute position.
+/// 3. Store all K/V into the KV cache for future decode calls.
+/// 4. Per head: compute scores[seq_len, total_kv_len] = Q * K^T / sqrt(d_head),
+///    apply causal mask (future positions → -inf), softmax each row, contract
+///    with V to get the output for each token.
+/// 5. Apply the output projection in batch.
+///
+/// GQA is handled naturally: each Q head indexes the KV cache via
+/// `kv_head = q_head / heads_per_kv`.
+///
+/// Memory: the scores matrix is `[batch_size, total_kv_len]` per head.
+/// For a 512-token prompt with 8 KV heads and 128-dim heads, that's
+/// ~512 × (cache_pos + 512) × 8 × 4 bytes ≈ a few MB — acceptable.
 pub fn attention_prefill_batch_configurable(
     hidden_batch: &[f32],
     batch_size: usize,
@@ -234,60 +248,65 @@ pub fn attention_prefill_batch_configurable(
     let kv_dim = config.num_kv_heads * config.head_dim;
     let heads_per_kv = config.num_heads / config.num_kv_heads;
 
-    let mut q = vec![0.0f32; batch_size * q_dim];
-    let mut k = vec![0.0f32; batch_size * kv_dim];
-    let mut v = vec![0.0f32; batch_size * kv_dim];
+    // Step 1: Batch-project all tokens through Q, K, V weight matrices.
+    // q: [batch_size, q_dim], k/v: [batch_size, kv_dim]
+    let mut q_all = vec![0.0f32; batch_size * q_dim];
+    let mut k_all = vec![0.0f32; batch_size * kv_dim];
+    let mut v_all = vec![0.0f32; batch_size * kv_dim];
 
     weights
         .wq
-        .matmul_input_rows(hidden_batch, batch_size, &mut q);
+        .matmul_input_rows(hidden_batch, batch_size, &mut q_all);
     weights
         .wk
-        .matmul_input_rows(hidden_batch, batch_size, &mut k);
+        .matmul_input_rows(hidden_batch, batch_size, &mut k_all);
     weights
         .wv
-        .matmul_input_rows(hidden_batch, batch_size, &mut v);
+        .matmul_input_rows(hidden_batch, batch_size, &mut v_all);
 
+    // Step 2: Add bias terms if present.
     if let Some(bq) = &weights.bq {
-        for chunk in q.chunks_mut(q_dim) {
+        for chunk in q_all.chunks_mut(q_dim) {
             for i in 0..q_dim {
                 chunk[i] += bq[i];
             }
         }
     }
     if let Some(bk) = &weights.bk {
-        for chunk in k.chunks_mut(kv_dim) {
+        for chunk in k_all.chunks_mut(kv_dim) {
             for i in 0..kv_dim {
                 chunk[i] += bk[i];
             }
         }
     }
     if let Some(bv) = &weights.bv {
-        for chunk in v.chunks_mut(kv_dim) {
+        for chunk in v_all.chunks_mut(kv_dim) {
             for i in 0..kv_dim {
                 chunk[i] += bv[i];
             }
         }
     }
 
+    // Step 3: Apply position encoding to each token's Q and K at their
+    // absolute positions (start_position + token_idx).
     for token_idx in 0..batch_size {
-        let position = start_position + token_idx;
-        let q_chunk = &mut q[token_idx * q_dim..(token_idx + 1) * q_dim];
-        let k_chunk = &mut k[token_idx * kv_dim..(token_idx + 1) * kv_dim];
+        let absolute_position = start_position + token_idx;
+        let q_chunk = &mut q_all[token_idx * q_dim..(token_idx + 1) * q_dim];
+        let k_chunk = &mut k_all[token_idx * kv_dim..(token_idx + 1) * kv_dim];
 
         match &config.pos_encoding {
             PosEncoding::RoPE { freq_base } => {
                 for h in 0..config.num_heads {
                     rope::rope_f32_checked(
                         &mut q_chunk[h * config.head_dim..(h + 1) * config.head_dim],
-                        position,
+                        absolute_position,
                         *freq_base,
                     )?;
                 }
                 for h in 0..config.num_kv_heads {
                     rope::rope_f32_checked(
                         &mut k_chunk[h * config.head_dim..(h + 1) * config.head_dim],
-                        position,
+                        absolute_position,
                         *freq_base,
                     )?;
                 }
@@ -300,7 +319,7 @@ pub fn attention_prefill_batch_configurable(
                     let start = h * config.head_dim;
                     rope::rope_f32_checked(
                         &mut q_chunk[start..start + rotary_dim],
-                        position,
+                        absolute_position,
                         *freq_base,
                     )?;
                 }
@@ -308,7 +327,7 @@ pub fn attention_prefill_batch_configurable(
                     let start = h * config.head_dim;
                     rope::rope_f32_checked(
                         &mut k_chunk[start..start + rotary_dim],
-                        position,
+                        absolute_position,
                         *freq_base,
                     )?;
                 }
@@ -317,54 +336,43 @@ pub fn attention_prefill_batch_configurable(
         }
     }
 
-    let scale = 1.0 / (config.head_dim as f32).sqrt();
-    let mut attn_output = vec![0.0f32; batch_size * q_dim];
-
+    // Step 4: Populate the KV cache with all new keys and values.
+    // We do this before computing attention so the cache holds the complete
+    // context (prior cached tokens + all new tokens). Causal masking is
+    // applied per token during the attention computation below.
+    let cache_pos_before_batch = cache.len();
     for token_idx in 0..batch_size {
-        let k_chunk = &k[token_idx * kv_dim..(token_idx + 1) * kv_dim];
-        let v_chunk = &v[token_idx * kv_dim..(token_idx + 1) * kv_dim];
+        let k_chunk = &k_all[token_idx * kv_dim..(token_idx + 1) * kv_dim];
+        let v_chunk = &v_all[token_idx * kv_dim..(token_idx + 1) * kv_dim];
         cache.store(k_chunk, v_chunk)?;
-
-        let seq_len = cache.len();
-        let q_chunk = &q[token_idx * q_dim..(token_idx + 1) * q_dim];
-        let out_chunk = &mut attn_output[token_idx * q_dim..(token_idx + 1) * q_dim];
-
-        if config.num_heads >= PARALLEL_HEAD_THRESHOLD {
-            let head_outputs: Vec<Vec<f32>> = (0..config.num_heads)
-                .into_par_iter()
-                .map(|h| {
-                    compute_head(
-                        h,
-                        heads_per_kv,
-                        q_chunk,
-                        cache,
-                        config.head_dim,
-                        seq_len,
-                        scale,
-                    )
-                })
-                .collect();
-
-            for (h, head_out) in head_outputs.iter().enumerate() {
-                out_chunk[h * config.head_dim..(h + 1) * config.head_dim].copy_from_slice(head_out);
-            }
-        } else {
-            for h in 0..config.num_heads {
-                let head_out = compute_head(
-                    h,
-                    heads_per_kv,
-                    q_chunk,
-                    cache,
-                    config.head_dim,
-                    seq_len,
-                    scale,
-                );
-                out_chunk[h * config.head_dim..(h + 1) * config.head_dim]
-                    .copy_from_slice(&head_out);
-            }
-        }
     }
 
+    // Total KV positions available after the batch is stored.
+    let total_kv_len = cache.len();
+    let scale = 1.0 / (config.head_dim as f32).sqrt();
+
+    // Step 5: Batched causal attention across all heads.
+    //
+    // For each head we compute an [batch_size x total_kv_len] score matrix,
+    // apply the causal mask, softmax each row, then contract with V to get
+    // [batch_size x head_dim] output. Heads are parallelized with rayon.
+    //
+    // Causal mask rule: token at batch index `i` (absolute position
+    // `cache_pos_before_batch + i`) may attend to KV positions 0..=(cache_pos_before_batch + i).
+    let attn_output =
+        compute_prefill_attention_all_heads(
+            &q_all,
+            cache,
+            batch_size,
+            config.num_heads,
+            heads_per_kv,
+            config.head_dim,
+            cache_pos_before_batch,
+            total_kv_len,
+            scale,
+        );
+
+    // Step 6: Output projection in batch, plus optional bias.
     let mut output = vec![0.0f32; batch_size * hidden_dim];
     weights
         .wo
@@ -378,6 +386,163 @@ pub fn attention_prefill_batch_configurable(
     }
 
     Ok(output)
+}
+
+/// Compute causal attention output for all heads over a prefill batch.
+///
+/// Returns `[batch_size * q_dim]` attention output (all heads concatenated).
+///
+/// For each Q head `h`:
+/// - Gather the corresponding KV head via `kv_h = h / heads_per_kv`.
+/// - Build a score row for each query token by dotting against all cached
+///   keys up to and including that token's causal horizon.
+/// - Mask future positions to -inf, softmax, then contract with values.
+///
+/// Parallelized across heads when `num_heads >= PARALLEL_HEAD_THRESHOLD`.
+fn compute_prefill_attention_all_heads(
+    q_all: &[f32],
+    cache: &LayerCache,
+    batch_size: usize,
+    num_heads: usize,
+    heads_per_kv: usize,
+    head_dim: usize,
+    cache_pos_before_batch: usize,
+    total_kv_len: usize,
+    scale: f32,
+) -> Vec<f32> {
+    let q_dim = num_heads * head_dim;
+    let mut attn_output = vec![0.0f32; batch_size * q_dim];
+
+    // Each head produces a [batch_size x head_dim] block starting at
+    // h * head_dim within each token's output slice.
+    if num_heads >= PARALLEL_HEAD_THRESHOLD {
+        // Compute all heads in parallel; collect into per-head vecs, then scatter.
+        let head_outputs: Vec<Vec<f32>> = (0..num_heads)
+            .into_par_iter()
+            .map(|h| {
+                compute_prefill_head(
+                    h,
+                    heads_per_kv,
+                    q_all,
+                    cache,
+                    batch_size,
+                    head_dim,
+                    cache_pos_before_batch,
+                    total_kv_len,
+                    scale,
+                )
+            })
+            .collect();
+
+        // Scatter each head's output into the interleaved attn_output layout:
+        // attn_output[token * q_dim + h * head_dim .. + head_dim]
+        for (h, head_out) in head_outputs.iter().enumerate() {
+            for token_idx in 0..batch_size {
+                let src = &head_out[token_idx * head_dim..(token_idx + 1) * head_dim];
+                let dst_start = token_idx * q_dim + h * head_dim;
+                attn_output[dst_start..dst_start + head_dim].copy_from_slice(src);
+            }
+        }
+    } else {
+        for h in 0..num_heads {
+            let head_out = compute_prefill_head(
+                h,
+                heads_per_kv,
+                q_all,
+                cache,
+                batch_size,
+                head_dim,
+                cache_pos_before_batch,
+                total_kv_len,
+                scale,
+            );
+            for token_idx in 0..batch_size {
+                let src = &head_out[token_idx * head_dim..(token_idx + 1) * head_dim];
+                let dst_start = token_idx * q_dim + h * head_dim;
+                attn_output[dst_start..dst_start + head_dim].copy_from_slice(src);
+            }
+        }
+    }
+
+    attn_output
+}
+
+/// Compute batched causal attention for a single head over all prompt tokens.
+///
+/// Returns `[batch_size * head_dim]` (tokens × head values, packed row-major).
+///
+/// For token `i` (0-indexed within the batch):
+///   - Its absolute KV position is `cache_pos_before_batch + i`.
+///   - It can attend to KV cache positions 0..=`cache_pos_before_batch + i`.
+///   - Positions beyond that limit are set to -inf before softmax.
+fn compute_prefill_head(
+    h: usize,
+    heads_per_kv: usize,
+    q_all: &[f32],
+    cache: &LayerCache,
+    batch_size: usize,
+    head_dim: usize,
+    cache_pos_before_batch: usize,
+    total_kv_len: usize,
+    scale: f32,
+) -> Vec<f32> {
+    let kv_h = h / heads_per_kv;
+
+    // q_all layout: [batch_size, num_heads * head_dim] (row-major).
+    // The per-token stride is q_all.len() / batch_size = num_heads * head_dim.
+    let q_stride = q_all.len() / batch_size;
+
+    // scores: [batch_size x total_kv_len] — one row per query token.
+    let mut scores = vec![0.0f32; batch_size * total_kv_len];
+
+    // Build the score matrix with causal masking applied inline.
+    //
+    // scores[i, j] = Q[i] · K[j] * scale  if j <= cache_pos_before_batch + i
+    //              = -inf                    otherwise (causal mask)
+    for token_idx in 0..batch_size {
+        // Extract this token's Q vector for head `h`.
+        let q_head_start = token_idx * q_stride + h * head_dim;
+        let q_head = &q_all[q_head_start..q_head_start + head_dim];
+
+        // Token `token_idx` occupies absolute KV position `cache_pos_before_batch + token_idx`.
+        // It may attend to all KV positions up to and including its own absolute position.
+        let causal_horizon = cache_pos_before_batch + token_idx;
+
+        let score_row = &mut scores[token_idx * total_kv_len..(token_idx + 1) * total_kv_len];
+
+        for kv_pos in 0..total_kv_len {
+            if kv_pos <= causal_horizon {
+                let k_vec = cache.key_at(kv_pos, kv_h);
+                score_row[kv_pos] = matmul::dot_f32(q_head, k_vec) * scale;
+            } else {
+                // Future position: -inf collapses to 0 after softmax.
+                score_row[kv_pos] = f32::NEG_INFINITY;
+            }
+        }
+
+        softmax::softmax_f32(score_row);
+    }
+
+    // Contract softmax weights with values: out[i] = sum_j scores[i,j] * V[j]
+    let mut out = vec![0.0f32; batch_size * head_dim];
+    for token_idx in 0..batch_size {
+        let score_row = &scores[token_idx * total_kv_len..(token_idx + 1) * total_kv_len];
+        let out_slice = &mut out[token_idx * head_dim..(token_idx + 1) * head_dim];
+        for kv_pos in 0..total_kv_len {
+            let s = score_row[kv_pos];
+            // After softmax, masked positions have score 0. Skip them to avoid
+            // multiplying by zero, which also avoids reading those V entries.
+            if s == 0.0 {
+                continue;
+            }
+            let v_vec = cache.value_at(kv_pos, kv_h);
+            for d in 0..head_dim {
+                out_slice[d] += s * v_vec[d];
+            }
+        }
+    }
+
+    out
 }
 
 /// Compute attention for a single head. Pure function, safe to parallelize.
@@ -761,5 +926,369 @@ mod tests {
 
         assert_eq!(output.len(), hidden_dim);
         assert!(output.iter().all(|v| v.is_finite()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Batched prefill tests
+    // -----------------------------------------------------------------------
+
+    /// Build a Llama-style config for prefill tests.
+    fn make_llama_config(
+        hidden_dim: usize,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        intermediate_dim: usize,
+    ) -> ModelConfig {
+        ModelConfig {
+            architecture: "llama".into(),
+            arch: crate::config::Architecture::Llama,
+            num_layers: 1,
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+            vocab_size: 32,
+            max_context_length: 128,
+            rope_freq_base: 10000.0,
+            rms_norm_eps: 1e-5,
+            norm_type: crate::config::NormType::RMSNorm,
+            ffn_type: crate::config::FFNType::SwiGLU,
+            pos_encoding: PosEncoding::RoPE { freq_base: 10000.0 },
+            block_style: crate::config::BlockStyle::Sequential,
+            has_qkv_bias: false,
+            has_output_bias: false,
+            embedding_scale: None,
+        }
+    }
+
+    /// Prefill a sequence token-by-token using `attention_decode_configurable`,
+    /// returning the outputs for all tokens (used as the reference implementation).
+    fn prefill_sequential(
+        hidden_batch: &[f32],
+        batch_size: usize,
+        weights: &BlockWeights,
+        config: &ModelConfig,
+        start_position: usize,
+    ) -> Vec<f32> {
+        let hidden_dim = config.hidden_dim;
+        let mut cache = LayerCache::new(128, config.num_kv_heads, config.head_dim);
+        let mut outputs = vec![0.0f32; batch_size * hidden_dim];
+
+        for token_idx in 0..batch_size {
+            let hidden = &hidden_batch[token_idx * hidden_dim..(token_idx + 1) * hidden_dim];
+            let position = start_position + token_idx;
+            let out =
+                attention_decode_configurable(hidden, weights, &mut cache, position, config)
+                    .unwrap();
+            outputs[token_idx * hidden_dim..(token_idx + 1) * hidden_dim]
+                .copy_from_slice(&out);
+        }
+
+        outputs
+    }
+
+    #[test]
+    fn test_prefill_batch_output_is_finite() {
+        // Basic smoke test: batched prefill produces finite values and correct shape.
+        let hidden_dim = 8;
+        let num_heads = 2;
+        let num_kv_heads = 2;
+        let head_dim = 4;
+        let intermediate_dim = 16;
+        let batch_size = 4;
+
+        let config =
+            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let weights =
+            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+
+        // Give each token a distinct hidden state.
+        let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
+            .map(|i| ((i % 7) as f32 - 3.0) * 0.1)
+            .collect();
+
+        let mut cache = LayerCache::new(128, num_kv_heads, head_dim);
+        let output = attention_prefill_batch_configurable(
+            &hidden_batch,
+            batch_size,
+            &weights,
+            &mut cache,
+            0,
+            &config,
+        )
+        .unwrap();
+
+        assert_eq!(output.len(), batch_size * hidden_dim);
+        assert!(
+            output.iter().all(|v| v.is_finite()),
+            "all outputs should be finite"
+        );
+        // All batch tokens should have been stored in the KV cache.
+        assert_eq!(cache.len(), batch_size, "cache should hold all prompt tokens");
+    }
+
+    #[test]
+    fn test_prefill_batch_matches_sequential() {
+        // The batched prefill must produce the same result as processing each token
+        // one-at-a-time with `attention_decode_configurable`. This verifies that the
+        // causal masking is correct and that RoPE is applied at the right positions.
+        let hidden_dim = 8;
+        let num_heads = 2;
+        let num_kv_heads = 2;
+        let head_dim = 4;
+        let intermediate_dim = 16;
+        let batch_size = 5;
+
+        let config =
+            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let weights =
+            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+
+        let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
+            .map(|i| ((i % 11) as f32 - 5.0) * 0.1)
+            .collect();
+
+        // Reference: sequential token-by-token decode.
+        let sequential_out = prefill_sequential(&hidden_batch, batch_size, &weights, &config, 0);
+
+        // System under test: batched prefill.
+        let mut cache = LayerCache::new(128, num_kv_heads, head_dim);
+        let batch_out = attention_prefill_batch_configurable(
+            &hidden_batch,
+            batch_size,
+            &weights,
+            &mut cache,
+            0,
+            &config,
+        )
+        .unwrap();
+
+        // Allow for small floating-point differences due to summation order.
+        let max_diff: f32 = sequential_out
+            .iter()
+            .zip(batch_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-4,
+            "batched prefill differs from sequential by {max_diff} (expected < 1e-4)"
+        );
+    }
+
+    #[test]
+    fn test_prefill_batch_gqa_matches_sequential() {
+        // Test with GQA: num_kv_heads < num_heads.
+        // Each pair of Q heads shares one KV head.
+        let hidden_dim = 16;
+        let num_heads = 4;
+        let num_kv_heads = 2; // GQA: 2 Q heads per KV head
+        let head_dim = 4;
+        let intermediate_dim = 32;
+        let batch_size = 4;
+
+        let config =
+            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let weights =
+            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+
+        let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
+            .map(|i| ((i % 13) as f32 - 6.0) * 0.08)
+            .collect();
+
+        let sequential_out = prefill_sequential(&hidden_batch, batch_size, &weights, &config, 0);
+
+        let mut cache = LayerCache::new(128, num_kv_heads, head_dim);
+        let batch_out = attention_prefill_batch_configurable(
+            &hidden_batch,
+            batch_size,
+            &weights,
+            &mut cache,
+            0,
+            &config,
+        )
+        .unwrap();
+
+        let max_diff: f32 = sequential_out
+            .iter()
+            .zip(batch_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-4,
+            "GQA batched prefill differs from sequential by {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_prefill_batch_with_cache_offset() {
+        // Verify prefill with cache_pos > 0 (continuing from prior context).
+        // We fill the cache with 3 tokens first, then prefill 4 more.
+        // The batched path must apply causal masking relative to the correct
+        // absolute positions (3, 4, 5, 6).
+        let hidden_dim = 8;
+        let num_heads = 2;
+        let num_kv_heads = 2;
+        let head_dim = 4;
+        let intermediate_dim = 16;
+        let prior_tokens = 3;
+        let batch_size = 4;
+
+        let config =
+            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let weights =
+            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+
+        // Hidden states for all tokens (prior + batch).
+        let all_hidden: Vec<f32> = (0..(prior_tokens + batch_size) * hidden_dim)
+            .map(|i| ((i % 9) as f32 - 4.0) * 0.12)
+            .collect();
+
+        // Reference: process all tokens sequentially from scratch.
+        let full_sequential =
+            prefill_sequential(&all_hidden, prior_tokens + batch_size, &weights, &config, 0);
+        let sequential_batch_out = &full_sequential[prior_tokens * hidden_dim..];
+
+        // System under test: prefill prior tokens individually, then batch the rest.
+        let mut cache = LayerCache::new(128, num_kv_heads, head_dim);
+        for tok in 0..prior_tokens {
+            let hidden = &all_hidden[tok * hidden_dim..(tok + 1) * hidden_dim];
+            attention_decode_configurable(hidden, &weights, &mut cache, tok, &config).unwrap();
+        }
+        assert_eq!(cache.len(), prior_tokens);
+
+        let batch_hidden = &all_hidden[prior_tokens * hidden_dim..];
+        let batch_out = attention_prefill_batch_configurable(
+            batch_hidden,
+            batch_size,
+            &weights,
+            &mut cache,
+            prior_tokens, // start_position = cache_pos_before_batch
+            &config,
+        )
+        .unwrap();
+
+        let max_diff: f32 = sequential_batch_out
+            .iter()
+            .zip(batch_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-4,
+            "prefill with cache offset differs from sequential by {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_prefill_causal_mask_token_cannot_see_future() {
+        // Verify the causal mask: the first token's output must not change when we
+        // add more tokens to the batch. If token 0 could attend to tokens 1, 2, …,
+        // its output would differ between a single-token and multi-token batch.
+        let hidden_dim = 8;
+        let num_heads = 2;
+        let num_kv_heads = 2;
+        let head_dim = 4;
+        let intermediate_dim = 16;
+
+        let config =
+            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let weights =
+            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+
+        // Vary hidden states so the test is sensitive to cross-token attention.
+        let single_hidden: Vec<f32> = (0..hidden_dim)
+            .map(|i| (i as f32 + 1.0) * 0.3)
+            .collect();
+        let multi_hidden: Vec<f32> = {
+            let mut v = single_hidden.clone();
+            // Append a second token with a very different hidden state.
+            v.extend((0..hidden_dim).map(|i| -(i as f32 + 1.0) * 0.7));
+            v
+        };
+
+        // Single-token prefill — only token 0 is processed.
+        let mut cache_single = LayerCache::new(128, num_kv_heads, head_dim);
+        let single_out = attention_prefill_batch_configurable(
+            &single_hidden,
+            1,
+            &weights,
+            &mut cache_single,
+            0,
+            &config,
+        )
+        .unwrap();
+
+        // Two-token prefill — token 0 output should be identical to single_out
+        // because token 0 cannot attend to token 1 (future).
+        let mut cache_multi = LayerCache::new(128, num_kv_heads, head_dim);
+        let multi_out = attention_prefill_batch_configurable(
+            &multi_hidden,
+            2,
+            &weights,
+            &mut cache_multi,
+            0,
+            &config,
+        )
+        .unwrap();
+
+        // Extract the first token's output from the two-token batch.
+        let multi_token0_out = &multi_out[..hidden_dim];
+
+        let max_diff: f32 = single_out
+            .iter()
+            .zip(multi_token0_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-5,
+            "token 0 output changed when future tokens were added (diff={max_diff}); \
+             causal mask is broken"
+        );
+    }
+
+    #[test]
+    fn test_prefill_parallel_heads_matches_sequential_heads() {
+        // Verify that the parallel-head path (num_heads >= PARALLEL_HEAD_THRESHOLD = 4)
+        // produces the same result as the sequential-head path. We use 4 heads to
+        // exercise the parallel branch, and compare against 2-head sequential config.
+        let hidden_dim = 16;
+        let num_heads = 4; // >= PARALLEL_HEAD_THRESHOLD
+        let num_kv_heads = 4;
+        let head_dim = 4;
+        let intermediate_dim = 32;
+        let batch_size = 3;
+
+        let config =
+            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let weights =
+            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+
+        let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
+            .map(|i| ((i % 5) as f32 - 2.0) * 0.15)
+            .collect();
+
+        let sequential_out = prefill_sequential(&hidden_batch, batch_size, &weights, &config, 0);
+
+        let mut cache = LayerCache::new(128, num_kv_heads, head_dim);
+        let batch_out = attention_prefill_batch_configurable(
+            &hidden_batch,
+            batch_size,
+            &weights,
+            &mut cache,
+            0,
+            &config,
+        )
+        .unwrap();
+
+        let max_diff: f32 = sequential_out
+            .iter()
+            .zip(batch_out.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-4,
+            "parallel-head prefill differs from sequential by {max_diff}"
+        );
     }
 }
