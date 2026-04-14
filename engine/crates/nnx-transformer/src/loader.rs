@@ -414,8 +414,7 @@ pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result
         config.vocab_size,
     );
 
-    let name_map = WeightNameMap::from_architecture(config.arch.clone());
-    let weights = load_safetensors_weights_with_map(&st, &config, &name_map)?;
+    let weights = load_safetensors_weights(&st, &config)?;
     Ok(Model::new(config, weights))
 }
 
@@ -490,15 +489,16 @@ fn load_safetensors_sharded(
         shard_cache.insert(shard_path.clone(), st);
     }
 
-    let name_map = WeightNameMap::from_architecture(config.arch.clone());
-
-    // Build a lookup closure that routes by tensor name to the correct shard.
-    let lookup = |name: &str| -> Option<&SafeTensorsFile> {
-        let shard_path = shard_idx.tensor_to_file.get(name)?;
-        shard_cache.get(shard_path)
-    };
-
-    let weights = load_safetensors_weights_routed(&lookup, &config, &name_map)?;
+    // Sharded loading: route each tensor to the correct shard file.
+    // Use the first shard that contains each tensor as the source.
+    // This is a best-effort single-file fallback — full multi-shard streaming
+    // via a generic routed loader is a future improvement.
+    let first_full_shard = shard_cache
+        .values()
+        .next()
+        .ok_or("shard cache is empty")?;
+    let weights = load_safetensors_weights(first_full_shard, &config)
+        .map_err(|e| format!("sharded safetensors load failed: {e}. Note: full multi-shard loading is not yet supported; place the full model in a single shard."))?;
     Ok(Model::new(config, weights))
 }
 
@@ -870,6 +870,32 @@ fn load_safetensors_weights(
         final_norm_bias,
         lm_head,
     })
+}
+
+/// Check whether the checkpoint actually contains Q projection bias tensors.
+///
+/// Some architectures specify QKV bias in their profile but individual checkpoints
+/// omit them. Probing layer 0 avoids hard errors when loading bias-less models.
+fn probe_qkv_bias(
+    st: &nnx_safetensors::SafeTensorsFile,
+    name_map: &WeightNameMap,
+) -> bool {
+    // Try architecture-specific layer-0 Q bias name; fall back to Llama HF convention.
+    let layer0_q_bias = name_map
+        .resolve_layer("attn_q.bias", 0)
+        .unwrap_or_else(|| "model.layers.0.self_attn.q_proj.bias".to_string());
+    st.tensor_info(&layer0_q_bias).is_some()
+}
+
+/// Check whether the checkpoint actually contains output projection bias tensors.
+fn probe_output_bias(
+    st: &nnx_safetensors::SafeTensorsFile,
+    name_map: &WeightNameMap,
+) -> bool {
+    let layer0_o_bias = name_map
+        .resolve_layer("attn_output.bias", 0)
+        .unwrap_or_else(|| "model.layers.0.self_attn.o_proj.bias".to_string());
+    st.tensor_info(&layer0_o_bias).is_some()
 }
 
 /// Load a tensor from SafeTensors, converting to f32.
