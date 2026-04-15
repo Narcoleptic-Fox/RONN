@@ -1,5 +1,6 @@
 //! KV cache for autoregressive generation.
 
+use nnx_core::engine::KVStore;
 use nnx_core::error::{EngineError, Result};
 
 /// Per-layer KV cache storing keys and values as contiguous f32 buffers.
@@ -85,6 +86,24 @@ impl LayerCache {
     }
 }
 
+impl KVStore for LayerCache {
+    fn key_at(&self, pos: usize, kv_head: usize) -> &[f32] {
+        LayerCache::key_at(self, pos, kv_head)
+    }
+
+    fn value_at(&self, pos: usize, kv_head: usize) -> &[f32] {
+        LayerCache::value_at(self, pos, kv_head)
+    }
+
+    fn len(&self) -> usize {
+        LayerCache::len(self)
+    }
+
+    fn store(&mut self, key: &[f32], value: &[f32]) -> Result<()> {
+        LayerCache::store(self, key, value)
+    }
+}
+
 /// Full model KV cache — one LayerCache per transformer layer.
 #[derive(Debug, Clone)]
 pub struct KVCache {
@@ -109,6 +128,10 @@ impl KVCache {
         &self.layers[i]
     }
     pub fn layer_mut(&mut self, i: usize) -> &mut LayerCache {
+        &mut self.layers[i]
+    }
+    /// Access a layer cache as a trait object for generic attention dispatch.
+    pub fn layer_store(&mut self, i: usize) -> &mut dyn KVStore {
         &mut self.layers[i]
     }
     pub fn position(&self) -> usize {

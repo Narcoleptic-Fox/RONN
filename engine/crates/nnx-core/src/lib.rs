@@ -4,6 +4,7 @@
 //! tensor representation, data types, device abstraction, and the
 //! [`InferenceEngine`] trait that orchestration layers build upon.
 
+pub mod backend;
 pub mod device;
 pub mod dtype;
 pub mod engine;
@@ -11,10 +12,11 @@ pub mod error;
 pub mod shape;
 pub mod tensor;
 
+pub use backend::KernelBackend;
 pub use device::{Device, DeviceId};
 pub use dtype::DType;
 pub use engine::{
-    GenerationOutput, InferenceEngine, KVCacheAccess, LoadConfig, ModelHandle, ModelInfo,
+    GenerationOutput, InferenceEngine, KVCacheAccess, KVStore, LoadConfig, ModelHandle, ModelInfo,
     RequestHandle, TokenBatch,
 };
 pub use error::{EngineError, Result};

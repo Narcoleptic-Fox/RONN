@@ -44,6 +44,10 @@ pub enum EngineError {
     #[error("generation error: {0}")]
     Generation(String),
 
+    /// Serving infrastructure error (paged attention, scheduling).
+    #[error("serving error: {0}")]
+    Serving(String),
+
     /// I/O error.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

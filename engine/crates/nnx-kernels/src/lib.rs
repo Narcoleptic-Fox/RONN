@@ -21,6 +21,7 @@
 
 pub mod activations;
 pub mod attention;
+pub mod cpu_backend;
 pub mod audio;
 pub mod comparison;
 pub mod conv;

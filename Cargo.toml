@@ -19,6 +19,8 @@ members = [
     "engine/crates/nnx-ggml",
     "engine/crates/nnx-kernels",
     "engine/crates/nnx-transformer",
+    "engine/crates/nnx-serving",
+    "engine/crates/nnx-cubecl",
     # Examples and tests
     "examples/*",
     "tests/integration",

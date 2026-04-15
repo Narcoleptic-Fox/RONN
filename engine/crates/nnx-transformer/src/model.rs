@@ -74,7 +74,7 @@ impl Model {
             block::forward_block(
                 &mut hidden,
                 &self.weights.layers[layer_idx],
-                cache.layer_mut(layer_idx),
+                cache.layer_store(layer_idx),
                 position,
                 cfg,
             )?;
@@ -178,7 +178,7 @@ impl Model {
                 &mut hidden_batch,
                 batch_size,
                 &self.weights.layers[layer_idx],
-                cache.layer_mut(layer_idx),
+                cache.layer_store(layer_idx),
                 start_position,
                 cfg,
             )?;

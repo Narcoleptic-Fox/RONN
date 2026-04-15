@@ -3,8 +3,8 @@
 //! Supports sequential (Llama, GPT-2, Gemma, Qwen) and parallel (Phi) block styles.
 
 use crate::attention;
-use crate::cache::LayerCache;
 use crate::config::{BlockStyle, ModelConfig, NormType};
+use nnx_core::engine::KVStore;
 use crate::ffn;
 use crate::weights::Matrix;
 use nnx_core::error::Result;
@@ -195,7 +195,7 @@ fn apply_norm_batch(
 pub fn forward_block(
     hidden: &mut [f32],
     weights: &BlockWeights,
-    cache: &mut LayerCache,
+    cache: &mut dyn KVStore,
     position: usize,
     config: &ModelConfig,
 ) -> Result<()> {
@@ -252,7 +252,7 @@ pub fn forward_block_batch(
     hidden_batch: &mut [f32],
     batch_size: usize,
     weights: &BlockWeights,
-    cache: &mut LayerCache,
+    cache: &mut dyn KVStore,
     start_position: usize,
     config: &ModelConfig,
 ) -> Result<()> {
@@ -315,6 +315,7 @@ pub fn forward_block_batch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::LayerCache;
     use crate::config::*;
 
     #[test]

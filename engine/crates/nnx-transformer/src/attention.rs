@@ -4,8 +4,8 @@
 //! position encoding, and GQA/MHA.
 
 use crate::block::BlockWeights;
-use crate::cache::LayerCache;
 use crate::config::{ModelConfig, PosEncoding};
+use nnx_core::engine::KVStore;
 use nnx_core::error::Result;
 use nnx_kernels::matmul;
 use nnx_kernels::rope;
@@ -24,7 +24,7 @@ pub fn attention_decode(
     wk: &[f32],
     wv: &[f32],
     wo: &[f32],
-    cache: &mut LayerCache,
+    cache: &mut dyn KVStore,
     position: usize,
     num_heads: usize,
     num_kv_heads: usize,
@@ -102,7 +102,7 @@ pub fn attention_decode(
 pub fn attention_decode_configurable(
     hidden: &[f32],
     weights: &BlockWeights,
-    cache: &mut LayerCache,
+    cache: &mut dyn KVStore,
     position: usize,
     config: &ModelConfig,
 ) -> Result<Vec<f32>> {
@@ -239,7 +239,7 @@ pub fn attention_prefill_batch_configurable(
     hidden_batch: &[f32],
     batch_size: usize,
     weights: &BlockWeights,
-    cache: &mut LayerCache,
+    cache: &mut dyn KVStore,
     start_position: usize,
     config: &ModelConfig,
 ) -> Result<Vec<f32>> {
@@ -401,7 +401,7 @@ pub fn attention_prefill_batch_configurable(
 /// Parallelized across heads when `num_heads >= PARALLEL_HEAD_THRESHOLD`.
 fn compute_prefill_attention_all_heads(
     q_all: &[f32],
-    cache: &LayerCache,
+    cache: &dyn KVStore,
     batch_size: usize,
     num_heads: usize,
     heads_per_kv: usize,
@@ -479,7 +479,7 @@ fn compute_prefill_head(
     h: usize,
     heads_per_kv: usize,
     q_all: &[f32],
-    cache: &LayerCache,
+    cache: &dyn KVStore,
     batch_size: usize,
     head_dim: usize,
     cache_pos_before_batch: usize,
@@ -550,7 +550,7 @@ fn compute_head(
     h: usize,
     heads_per_kv: usize,
     q: &[f32],
-    cache: &LayerCache,
+    cache: &dyn KVStore,
     head_dim: usize,
     seq_len: usize,
     scale: f32,
@@ -583,6 +583,7 @@ fn compute_head(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::LayerCache;
     use crate::weights::Matrix;
 
     #[test]

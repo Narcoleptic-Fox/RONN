@@ -123,6 +123,39 @@ pub struct ModelInfo {
     pub quantization: String,
 }
 
+/// Abstraction over per-layer KV cache storage.
+///
+/// Both contiguous (`LayerCache`) and paged (`PagedLayerView`) backends
+/// implement this trait, allowing attention kernels to work with either
+/// layout transparently.
+///
+/// # Thread Safety
+///
+/// Requires `Send + Sync` because attention heads are computed in parallel
+/// via rayon. The `store` method takes `&mut self` and runs sequentially
+/// before the parallel read phase.
+pub trait KVStore: Send + Sync {
+    /// Read the key vector for a cached position and KV head.
+    /// Returns a slice of length `head_dim`.
+    fn key_at(&self, pos: usize, kv_head: usize) -> &[f32];
+
+    /// Read the value vector for a cached position and KV head.
+    /// Returns a slice of length `head_dim`.
+    fn value_at(&self, pos: usize, kv_head: usize) -> &[f32];
+
+    /// Number of tokens currently stored.
+    fn len(&self) -> usize;
+
+    /// Whether the store is empty.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Append key/value for the next token position.
+    /// `key` and `value` each have length `num_kv_heads * head_dim`.
+    fn store(&mut self, key: &[f32], value: &[f32]) -> Result<()>;
+}
+
 /// Access to a model's KV cache for external management.
 ///
 /// This is the interface that RONN's cache tiering, eviction policies,

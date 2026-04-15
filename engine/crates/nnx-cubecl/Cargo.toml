@@ -1,0 +1,21 @@
+[package]
+name = "nnx-cubecl"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "GPU compute kernels for NNX via CubeCL (CUDA, ROCm, Metal, Vulkan, WebGPU)"
+
+[dependencies]
+cubecl = { version = "0.8", features = ["std"] }
+nnx-core = { path = "../nnx-core" }
+nnx-transformer = { path = "../nnx-transformer" }
+
+[features]
+default = []
+cuda = ["cubecl/cuda"]
+wgpu = ["cubecl/wgpu"]
+hip = ["cubecl/hip"]
+
+[lints]
+workspace = true
