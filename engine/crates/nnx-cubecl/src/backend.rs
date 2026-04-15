@@ -27,6 +27,7 @@ fn tiled_launch(len: usize) -> (CubeCount, CubeDim) {
 ///
 /// The handle is reference-counted internally by CubeCL, so cloning a
 /// `GpuBuffer` is cheap (it does not duplicate device memory).
+#[derive(Clone)]
 pub struct GpuBuffer {
     pub handle: Handle,
     pub len: usize,
@@ -55,6 +56,21 @@ unsafe impl<R: Runtime> Send for CubeclBackend<R> {}
 unsafe impl<R: Runtime> Sync for CubeclBackend<R> {}
 
 impl<R: Runtime> CubeclBackend<R> {
+    fn encode_u32(data: &[u32]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(data.len() * std::mem::size_of::<u32>());
+        for value in data {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn decode_u32(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .chunks_exact(std::mem::size_of::<u32>())
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+            .collect()
+    }
+
     /// Create a backend using the default device for this runtime.
     pub fn new() -> Self {
         let device = <R as Runtime>::Device::default();
@@ -85,6 +101,21 @@ impl<R: Runtime> CubeclBackend<R> {
     fn download(&self, handle: &Handle) -> Vec<f32> {
         let bytes = self.client.read_one(handle.clone());
         f32::from_bytes(&bytes).to_vec()
+    }
+
+    /// Upload u32 data to the GPU and return a handle.
+    pub fn from_u32(&self, data: &[u32]) -> GpuBuffer {
+        let bytes = Self::encode_u32(data);
+        GpuBuffer {
+            handle: self.client.create(&bytes),
+            len: data.len(),
+        }
+    }
+
+    /// Download u32 data from the GPU.
+    pub fn to_u32(&self, buffer: &GpuBuffer) -> Vec<u32> {
+        let bytes = self.client.read_one(buffer.handle.clone());
+        Self::decode_u32(&bytes)
     }
 }
 

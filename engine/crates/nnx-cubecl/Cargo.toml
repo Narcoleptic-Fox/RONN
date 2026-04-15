@@ -11,6 +11,7 @@ cubecl = { version = "0.8", features = ["std"] }
 half.workspace = true
 nnx-core = { path = "../nnx-core" }
 nnx-quant = { path = "../nnx-quant" }
+nnx-serving = { path = "../nnx-serving" }
 nnx-transformer = { path = "../nnx-transformer" }
 
 [features]
