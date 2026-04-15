@@ -45,6 +45,19 @@ impl KernelBackend for CpuBackend {
         crate::matmul::matvec_f32(matrix, x, y, m, k);
     }
 
+    fn matvec_bias(
+        &self,
+        matrix: &Self::Buffer,
+        x: &Self::Buffer,
+        bias: &Self::Buffer,
+        y: &mut Self::Buffer,
+        m: usize,
+        k: usize,
+    ) {
+        crate::matmul::matvec_f32(matrix, x, y, m, k);
+        crate::activations::add_f32_inplace(y, bias);
+    }
+
     fn dot(&self, a: &Self::Buffer, b: &Self::Buffer) -> f32 {
         crate::matmul::dot_f32(a, b)
     }
@@ -102,6 +115,16 @@ impl KernelBackend for CpuBackend {
         crate::activations::add_f32_inplace(a, b);
     }
 
+    fn fused_swiglu(&self, gate: &mut Self::Buffer, up: &Self::Buffer) {
+        crate::activations::silu_f32_inplace(gate);
+        crate::activations::mul_f32_inplace(gate, up);
+    }
+
+    fn fused_geglu(&self, gate: &mut Self::Buffer, up: &Self::Buffer) {
+        crate::activations::gelu_f32_inplace(gate);
+        crate::activations::mul_f32_inplace(gate, up);
+    }
+
     // --- Position encoding ---
 
     fn rope_inplace(
@@ -113,6 +136,23 @@ impl KernelBackend for CpuBackend {
         freq_base: f32,
     ) {
         let slice = &mut data[head_offset..head_offset + head_dim];
+        crate::rope::rope_f32(slice, position, freq_base);
+    }
+
+    fn partial_rope_inplace(
+        &self,
+        data: &mut Self::Buffer,
+        head_offset: usize,
+        _head_dim: usize,
+        rotary_dim: usize,
+        position: usize,
+        freq_base: f32,
+    ) {
+        if rotary_dim == 0 {
+            return;
+        }
+
+        let slice = &mut data[head_offset..head_offset + rotary_dim];
         crate::rope::rope_f32(slice, position, freq_base);
     }
 
@@ -146,6 +186,22 @@ mod tests {
         // Row 1: 4+5+6 = 15
         assert!((result[0] - 6.0).abs() < 1e-5);
         assert!((result[1] - 15.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cpu_matvec_bias() {
+        let backend = CpuBackend::new();
+
+        let matrix = backend.from_f32(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let x = backend.from_f32(&[1.0, 1.0, 1.0]);
+        let bias = backend.from_f32(&[0.5, -1.0]);
+        let mut y = backend.zeros(2);
+
+        backend.matvec_bias(&matrix, &x, &bias, &mut y, 2, 3);
+
+        let result = backend.to_f32(&y);
+        assert!((result[0] - 6.5).abs() < 1e-5);
+        assert!((result[1] - 14.0).abs() < 1e-5);
     }
 
     #[test]
@@ -200,7 +256,10 @@ mod tests {
 
         let result = backend.to_f32(&data);
         let sum: f32 = result.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-6, "softmax should sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-6,
+            "softmax should sum to 1.0, got {sum}"
+        );
 
         // Values should be monotonically increasing
         assert!(result[0] < result[1]);
@@ -326,6 +385,41 @@ mod tests {
     }
 
     #[test]
+    fn test_cpu_partial_rope_rotates_prefix_only() {
+        let backend = CpuBackend::new();
+
+        let mut data = backend.from_f32(&[
+            10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+        ]);
+        let original = backend.to_f32(&data);
+
+        let mut expected = original.clone();
+        crate::rope::rope_f32(&mut expected[6..10], 3, 10000.0);
+
+        backend.partial_rope_inplace(&mut data, 6, 6, 4, 3, 10000.0);
+
+        let result = backend.to_f32(&data);
+        assert_eq!(
+            &result[0..6],
+            &original[0..6],
+            "first head should be untouched"
+        );
+        assert_eq!(
+            &result[10..12],
+            &original[10..12],
+            "non-rotary suffix should be untouched"
+        );
+        for i in 6..10 {
+            assert!(
+                (result[i] - expected[i]).abs() < 1e-5,
+                "rotary prefix mismatch at {i}: {} vs {}",
+                result[i],
+                expected[i]
+            );
+        }
+    }
+
+    #[test]
     fn test_cpu_mul_inplace() {
         let backend = CpuBackend::new();
         let mut a = backend.from_f32(&[1.0, 2.0, 3.0]);
@@ -337,6 +431,46 @@ mod tests {
         assert!((result[0] - 4.0).abs() < 1e-6);
         assert!((result[1] - 10.0).abs() < 1e-6);
         assert!((result[2] - 18.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cpu_fused_swiglu_matches_separate_path() {
+        let backend = CpuBackend::new();
+        let gate_data = [0.5, 1.0, -1.0, 2.0];
+        let up = backend.from_f32(&[1.0, 2.0, 0.5, 3.0]);
+
+        let mut expected = backend.from_f32(&gate_data);
+        backend.silu_inplace(&mut expected);
+        backend.mul_inplace(&mut expected, &up);
+
+        let mut fused = backend.from_f32(&gate_data);
+        backend.fused_swiglu(&mut fused, &up);
+
+        let expected = backend.to_f32(&expected);
+        let result = backend.to_f32(&fused);
+        for i in 0..expected.len() {
+            assert!((result[i] - expected[i]).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_cpu_fused_geglu_matches_separate_path() {
+        let backend = CpuBackend::new();
+        let gate_data = [0.5, 1.0, -1.0, 2.0];
+        let up = backend.from_f32(&[1.0, 2.0, 0.5, 3.0]);
+
+        let mut expected = backend.from_f32(&gate_data);
+        backend.gelu_inplace(&mut expected);
+        backend.mul_inplace(&mut expected, &up);
+
+        let mut fused = backend.from_f32(&gate_data);
+        backend.fused_geglu(&mut fused, &up);
+
+        let expected = backend.to_f32(&expected);
+        let result = backend.to_f32(&fused);
+        for i in 0..expected.len() {
+            assert!((result[i] - expected[i]).abs() < 1e-6);
+        }
     }
 
     #[test]
@@ -365,7 +499,10 @@ mod tests {
         let result = backend.to_f32(&output);
         // Should be zero-mean after normalization
         let sum: f32 = result.iter().sum();
-        assert!(sum.abs() < 1e-4, "layer norm output should be zero-mean, got sum={sum}");
+        assert!(
+            sum.abs() < 1e-4,
+            "layer norm output should be zero-mean, got sum={sum}"
+        );
     }
 
     #[test]
@@ -381,7 +518,10 @@ mod tests {
         let result = backend.to_f32(&output);
         // Mean should be shifted by 10
         let mean: f32 = result.iter().sum::<f32>() / 4.0;
-        assert!((mean - 10.0).abs() < 1e-3, "biased layer norm mean should be ~10, got {mean}");
+        assert!(
+            (mean - 10.0).abs() < 1e-3,
+            "biased layer norm mean should be ~10, got {mean}"
+        );
     }
 
     #[test]

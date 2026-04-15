@@ -93,6 +93,14 @@ fn cpu_matvec(matrix: &[f32], vector: &[f32], m: usize, k: usize) -> Vec<f32> {
     out
 }
 
+fn cpu_matvec_bias(matrix: &[f32], vector: &[f32], bias: &[f32], m: usize, k: usize) -> Vec<f32> {
+    let mut out = cpu_matvec(matrix, vector, m, k);
+    for (value, bias_value) in out.iter_mut().zip(bias.iter()) {
+        *value += bias_value;
+    }
+    out
+}
+
 fn cpu_softmax(x: &[f32]) -> Vec<f32> {
     let max = x.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let exp: Vec<f32> = x.iter().map(|v| (v - max).exp()).collect();
@@ -111,6 +119,29 @@ fn cpu_rope(data: &mut [f32], head_dim: usize, position: usize, freq_base: f32) 
         let x1 = data[2 * pair + 1];
         data[2 * pair] = x0 * cos - x1 * sin;
         data[2 * pair + 1] = x0 * sin + x1 * cos;
+    }
+}
+
+fn cpu_partial_rope(
+    data: &mut [f32],
+    head_offset: usize,
+    head_dim: usize,
+    rotary_dim: usize,
+    position: usize,
+    freq_base: f32,
+) {
+    assert!(rotary_dim <= head_dim);
+    let slice = &mut data[head_offset..head_offset + rotary_dim];
+    let half = rotary_dim / 2;
+    for pair in 0..half {
+        let dim_frac = (2 * pair) as f32 / rotary_dim as f32;
+        let freq = 1.0 / freq_base.powf(dim_frac);
+        let angle = position as f32 * freq;
+        let (sin, cos) = angle.sin_cos();
+        let x0 = slice[pair];
+        let x1 = slice[pair + half];
+        slice[pair] = x0 * cos - x1 * sin;
+        slice[pair + half] = x0 * sin + x1 * cos;
     }
 }
 
@@ -163,6 +194,30 @@ fn test_matvec() {
 
     let result = b.to_f32(&y);
     assert_close(&result, &expected, 1e-4, "matvec");
+}
+
+#[test]
+fn test_matvec_bias() {
+    let b = backend();
+    let matrix_data = vec![
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+    ];
+    let vector_data = vec![1.0, 0.5, -1.0, 2.0];
+    let bias_data = vec![0.25, -1.5, 3.0];
+    let m = 3;
+    let k = 4;
+
+    let expected = cpu_matvec_bias(&matrix_data, &vector_data, &bias_data, m, k);
+
+    let matrix = b.from_f32(&matrix_data);
+    let x = b.from_f32(&vector_data);
+    let bias = b.from_f32(&bias_data);
+    let mut y = b.zeros(m);
+
+    b.matvec_bias(&matrix, &x, &bias, &mut y, m, k);
+
+    let result = b.to_f32(&y);
+    assert_close(&result, &expected, 1e-4, "matvec_bias");
 }
 
 #[test]
@@ -343,6 +398,46 @@ fn test_add_inplace() {
     assert_close(&result, &expected, 1e-6, "add_inplace");
 }
 
+#[test]
+fn test_fused_swiglu_matches_separate_path() {
+    let b = backend();
+    let gate_data = vec![0.5, 1.0, -1.0, 2.0, -0.25, 0.75];
+    let up_data = vec![1.0, 2.0, 0.5, 3.0, 4.0, -2.0];
+
+    let up = b.from_f32(&up_data);
+
+    let mut expected = b.from_f32(&gate_data);
+    b.silu_inplace(&mut expected);
+    b.mul_inplace(&mut expected, &up);
+
+    let mut fused = b.from_f32(&gate_data);
+    b.fused_swiglu(&mut fused, &up);
+
+    let expected = b.to_f32(&expected);
+    let result = b.to_f32(&fused);
+    assert_close(&result, &expected, 1e-5, "fused_swiglu");
+}
+
+#[test]
+fn test_fused_geglu_matches_separate_path() {
+    let b = backend();
+    let gate_data = vec![0.5, 1.0, -1.0, 2.0, -0.25, 0.75];
+    let up_data = vec![1.0, 2.0, 0.5, 3.0, 4.0, -2.0];
+
+    let up = b.from_f32(&up_data);
+
+    let mut expected = b.from_f32(&gate_data);
+    b.gelu_inplace(&mut expected);
+    b.mul_inplace(&mut expected, &up);
+
+    let mut fused = b.from_f32(&gate_data);
+    b.fused_geglu(&mut fused, &up);
+
+    let expected = b.to_f32(&expected);
+    let result = b.to_f32(&fused);
+    assert_close(&result, &expected, 1e-5, "fused_geglu");
+}
+
 // -----------------------------------------------------------------------
 // Softmax test
 // -----------------------------------------------------------------------
@@ -441,6 +536,49 @@ fn test_rope_with_offset() {
     assert_close(&result[0..4], &input[0..4], 1e-6, "rope_offset_head0");
     // Second head modified
     assert_close(&result[4..8], &expected_tail, 1e-4, "rope_offset_head1");
+}
+
+#[test]
+fn test_partial_rope_rotates_prefix_only() {
+    let b = backend();
+    let head_offset = 6;
+    let head_dim = 6;
+    let rotary_dim = 4;
+    let position = 3;
+    let freq_base = 10000.0;
+
+    let input = vec![
+        10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+    ];
+    let mut expected = input.clone();
+    cpu_partial_rope(
+        &mut expected,
+        head_offset,
+        head_dim,
+        rotary_dim,
+        position,
+        freq_base,
+    );
+
+    let mut buf = b.from_f32(&input);
+    b.partial_rope_inplace(
+        &mut buf,
+        head_offset,
+        head_dim,
+        rotary_dim,
+        position,
+        freq_base,
+    );
+
+    let result = b.to_f32(&buf);
+    assert_close(&result[0..6], &input[0..6], 1e-6, "partial_rope_head0");
+    assert_close(&result[10..12], &input[10..12], 1e-6, "partial_rope_suffix");
+    assert_close(
+        &result[head_offset..head_offset + rotary_dim],
+        &expected[head_offset..head_offset + rotary_dim],
+        1e-4,
+        "partial_rope_prefix",
+    );
 }
 
 #[test]

@@ -37,6 +37,17 @@ pub trait KernelBackend: Send + Sync {
         k: usize,
     );
 
+    /// Matrix-vector multiply with bias: y = A @ x + bias, where A is [m, k] row-major.
+    fn matvec_bias(
+        &self,
+        matrix: &Self::Buffer,
+        x: &Self::Buffer,
+        bias: &Self::Buffer,
+        y: &mut Self::Buffer,
+        m: usize,
+        k: usize,
+    );
+
     /// Dot product of two buffers.
     fn dot(&self, a: &Self::Buffer, b: &Self::Buffer) -> f32;
 
@@ -86,6 +97,12 @@ pub trait KernelBackend: Send + Sync {
     /// Elementwise add in-place: a += b.
     fn add_inplace(&self, a: &mut Self::Buffer, b: &Self::Buffer);
 
+    /// Fused SwiGLU: gate = silu(gate) * up.
+    fn fused_swiglu(&self, gate: &mut Self::Buffer, up: &Self::Buffer);
+
+    /// Fused GeGLU: gate = gelu(gate) * up.
+    fn fused_geglu(&self, gate: &mut Self::Buffer, up: &Self::Buffer);
+
     // --- Position encoding ---
 
     /// Apply RoPE in-place to a single head's data.
@@ -94,6 +111,17 @@ pub trait KernelBackend: Send + Sync {
         data: &mut Self::Buffer,
         head_offset: usize,
         head_dim: usize,
+        position: usize,
+        freq_base: f32,
+    );
+
+    /// Apply RoPE in-place to only the first `rotary_dim` dimensions of a head.
+    fn partial_rope_inplace(
+        &self,
+        data: &mut Self::Buffer,
+        head_offset: usize,
+        head_dim: usize,
+        rotary_dim: usize,
         position: usize,
         freq_base: f32,
     );

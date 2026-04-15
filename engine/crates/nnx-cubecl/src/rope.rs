@@ -42,3 +42,40 @@ pub fn rope_kernel(
         }
     }
 }
+
+/// Apply RoPE in-place to only the first `rotary_dim` dimensions of a head.
+///
+/// This matches the CPU path used for Phi-style partial RoPE by rotating the
+/// prefix slice `[head_offset..head_offset + rotary_dim)` and leaving the
+/// remainder of the head untouched.
+#[cube(launch)]
+pub fn partial_rope_kernel(
+    data: &mut Array<f32>,
+    head_offset: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    position: u32,
+    freq_base: f32,
+) {
+    let tid = UNIT_POS_X;
+
+    if tid == 0u32 && rotary_dim <= head_dim {
+        let half_dim = rotary_dim / 2u32;
+        for pair in 0..half_dim {
+            let dim_fraction = f32::cast_from(2u32 * pair) / f32::cast_from(rotary_dim);
+            let freq = 1.0f32 / f32::powf(freq_base, dim_fraction);
+            let angle = f32::cast_from(position) * freq;
+            let cos_val = f32::cos(angle);
+            let sin_val = f32::sin(angle);
+
+            let idx_even = head_offset + pair;
+            let idx_odd = idx_even + half_dim;
+
+            let x0 = data[idx_even];
+            let x1 = data[idx_odd];
+
+            data[idx_even] = x0 * cos_val - x1 * sin_val;
+            data[idx_odd] = x0 * sin_val + x1 * cos_val;
+        }
+    }
+}

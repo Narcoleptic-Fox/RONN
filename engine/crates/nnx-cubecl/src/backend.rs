@@ -135,6 +135,29 @@ impl<R: Runtime> KernelBackend for CubeclBackend<R> {
         }
     }
 
+    fn matvec_bias(
+        &self,
+        matrix: &Self::Buffer,
+        x: &Self::Buffer,
+        bias: &Self::Buffer,
+        y: &mut Self::Buffer,
+        m: usize,
+        k: usize,
+    ) {
+        unsafe {
+            crate::matmul::matvec_bias_kernel::launch::<R>(
+                &self.client,
+                CubeCount::Static(m as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&matrix.handle, m * k, 1),
+                ArrayArg::from_raw_parts::<f32>(&x.handle, k, 1),
+                ArrayArg::from_raw_parts::<f32>(&bias.handle, m, 1),
+                ArrayArg::from_raw_parts::<f32>(&y.handle, m, 1),
+                ScalarArg::new(k as u32),
+            );
+        }
+    }
+
     fn dot(&self, a: &Self::Buffer, b: &Self::Buffer) -> f32 {
         let len = a.len;
         let out = self.zeros(1);
@@ -296,6 +319,46 @@ impl<R: Runtime> KernelBackend for CubeclBackend<R> {
         }
     }
 
+    fn fused_swiglu(&self, gate: &mut Self::Buffer, up: &Self::Buffer) {
+        let len = gate.len;
+        let (cubes, block) = tiled_launch(len);
+        let output = self.zeros(len);
+
+        unsafe {
+            crate::activations::fused_swiglu_kernel::launch::<R>(
+                &self.client,
+                cubes,
+                block,
+                ArrayArg::from_raw_parts::<f32>(&gate.handle, len, 1),
+                ArrayArg::from_raw_parts::<f32>(&up.handle, len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, len, 1),
+                ScalarArg::new(len as u32),
+            );
+        }
+
+        *gate = output;
+    }
+
+    fn fused_geglu(&self, gate: &mut Self::Buffer, up: &Self::Buffer) {
+        let len = gate.len;
+        let (cubes, block) = tiled_launch(len);
+        let output = self.zeros(len);
+
+        unsafe {
+            crate::activations::fused_geglu_kernel::launch::<R>(
+                &self.client,
+                cubes,
+                block,
+                ArrayArg::from_raw_parts::<f32>(&gate.handle, len, 1),
+                ArrayArg::from_raw_parts::<f32>(&up.handle, len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, len, 1),
+                ScalarArg::new(len as u32),
+            );
+        }
+
+        *gate = output;
+    }
+
     // --- Position encoding ---
 
     fn rope_inplace(
@@ -314,6 +377,30 @@ impl<R: Runtime> KernelBackend for CubeclBackend<R> {
                 ArrayArg::from_raw_parts::<f32>(&data.handle, data.len, 1),
                 ScalarArg::new(head_offset as u32),
                 ScalarArg::new(head_dim as u32),
+                ScalarArg::new(position as u32),
+                ScalarArg::new(freq_base),
+            );
+        }
+    }
+
+    fn partial_rope_inplace(
+        &self,
+        data: &mut Self::Buffer,
+        head_offset: usize,
+        head_dim: usize,
+        rotary_dim: usize,
+        position: usize,
+        freq_base: f32,
+    ) {
+        unsafe {
+            crate::rope::partial_rope_kernel::launch::<R>(
+                &self.client,
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&data.handle, data.len, 1),
+                ScalarArg::new(head_offset as u32),
+                ScalarArg::new(head_dim as u32),
+                ScalarArg::new(rotary_dim as u32),
                 ScalarArg::new(position as u32),
                 ScalarArg::new(freq_base),
             );
