@@ -5,23 +5,22 @@
 //! the device. Weights and the KV cache remain GPU-resident — the only
 //! CPU round-trip is downloading the final logits.
 //!
-//! # Supported Configurations (v1)
+//! # Current Coverage
 //!
-//! - Normalization: RMSNorm
-//! - FFN: SwiGLU
-//! - Position encoding: Full RoPE
-//! - Block style: Sequential
-//! - Bias: None
+//! - Weight upload supports all 10 architecture profiles defined by
+//!   `nnx-transformer`.
+//! - The forward pass in this file still executes the original v1 path
+//!   (RMSNorm + SwiGLU + full RoPE + sequential blocks, no bias handling).
 //!
-//! This covers Llama, Mistral, CodeLlama, and most Qwen models.
-//! Unsupported configurations produce a clear assertion failure rather than
-//! silent wrong results.
+//! The upload path is expanded first so the forward pass can switch on the
+//! full `ModelConfig` in a follow-up change without needing another GPU
+//! weight-layout migration.
 
 use cubecl::prelude::*;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
 use nnx_core::backend::KernelBackend;
-use nnx_transformer::config::{BlockStyle, FFNType, ModelConfig, NormType, PosEncoding};
+use nnx_transformer::config::{ModelConfig, PosEncoding};
 use nnx_transformer::weights::Matrix;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +38,12 @@ pub struct GpuLayerWeights {
     pub w_gate: GpuBuffer,
     pub w_up: GpuBuffer,
     pub w_down: GpuBuffer,
+    pub bq: Option<GpuBuffer>,
+    pub bk: Option<GpuBuffer>,
+    pub bv: Option<GpuBuffer>,
+    pub bo: Option<GpuBuffer>,
+    pub attn_norm_bias: Option<GpuBuffer>,
+    pub ffn_norm_bias: Option<GpuBuffer>,
 }
 
 /// All model weights stored on GPU.
@@ -46,6 +51,8 @@ pub struct GpuModelWeights {
     pub token_embedding: GpuBuffer,
     pub layers: Vec<GpuLayerWeights>,
     pub final_norm: GpuBuffer,
+    pub final_norm_bias: Option<GpuBuffer>,
+    pub position_embedding: Option<GpuBuffer>,
     pub lm_head: GpuBuffer,
 }
 
@@ -103,65 +110,54 @@ unsafe impl<R: Runtime> Send for GpuInference<R> {}
 unsafe impl<R: Runtime> Sync for GpuInference<R> {}
 
 impl<R: Runtime> GpuInference<R> {
-    /// Upload all model weights to GPU and create an inference engine.
+    /// Validate whether a model config can be uploaded into GPU-resident weight
+    /// storage.
     ///
-    /// # Panics
-    ///
-    /// Panics if the model uses an unsupported configuration for GPU inference v1:
-    /// - NormType must be RMSNorm
-    /// - FFNType must be SwiGLU
-    /// - PosEncoding must be RoPE (full)
-    /// - BlockStyle must be Sequential
-    /// - No bias terms allowed
-    pub fn from_model(model: &nnx_transformer::model::Model) -> Self {
-        let cfg = &model.config;
+    /// This validation is intentionally broader than the current forward pass.
+    /// Upload accepts all known architecture profiles so later execution code can
+    /// dispatch on `ModelConfig` without another data-structure migration.
+    pub fn validate_config(cfg: &ModelConfig) -> Result<(), String> {
+        cfg.validate()?;
+        Ok(())
+    }
 
-        // Validate supported configuration — fail fast with clear messages
-        assert_eq!(
-            cfg.norm_type,
-            NormType::RMSNorm,
-            "GPU inference v1 only supports RMSNorm (got {:?})",
-            cfg.norm_type,
-        );
-        assert_eq!(
-            cfg.ffn_type,
-            FFNType::SwiGLU,
-            "GPU inference v1 only supports SwiGLU FFN (got {:?})",
-            cfg.ffn_type,
-        );
-        assert!(
-            matches!(cfg.pos_encoding, PosEncoding::RoPE { .. }),
-            "GPU inference v1 only supports full RoPE (got {:?})",
-            cfg.pos_encoding,
-        );
-        assert_eq!(
-            cfg.block_style,
-            BlockStyle::Sequential,
-            "GPU inference v1 only supports Sequential block style (got {:?})",
-            cfg.block_style,
-        );
-        assert!(
-            !cfg.has_qkv_bias,
-            "GPU inference v1 does not support QKV bias",
-        );
-        assert!(
-            !cfg.has_output_bias,
-            "GPU inference v1 does not support output bias",
-        );
+    /// Upload all model weights to GPU and create an inference engine.
+    pub fn from_model(model: &nnx_transformer::model::Model) -> Result<Self, String> {
+        let cfg = &model.config;
+        Self::validate_config(cfg)?;
+
+        if model.weights.layers.len() != cfg.num_layers {
+            return Err(format!(
+                "model has {} layers of weights but config declares {}",
+                model.weights.layers.len(),
+                cfg.num_layers
+            ));
+        }
 
         let backend = CubeclBackend::<R>::new();
 
         let upload = |data: &[f32]| -> GpuBuffer { backend.from_f32(data) };
-
         let upload_matrix = |matrix: &Matrix| -> GpuBuffer {
             let data = matrix_to_f32(matrix);
             upload(&data)
         };
+        let upload_optional = |data: Option<&[f32]>| -> Option<GpuBuffer> { data.map(upload) };
 
         // Upload embedding and LM head
         let token_embedding = upload_matrix(&model.weights.token_embedding);
         let lm_head = upload_matrix(&model.weights.lm_head);
         let final_norm = upload(&model.weights.final_norm);
+        let final_norm_bias = upload_optional(model.weights.final_norm_bias.as_deref());
+        let position_embedding = match cfg.pos_encoding {
+            PosEncoding::Learned => {
+                // `nnx-transformer::ModelWeights` does not yet expose learned
+                // position embeddings. Upload a zero-filled placeholder so the
+                // GPU weight layout matches GPT-2-style models until the loader
+                // can pass through the real table.
+                Some(backend.zeros(cfg.max_context_length * cfg.hidden_dim))
+            }
+            _ => None,
+        };
 
         // Upload per-layer weights
         let layers = model
@@ -178,6 +174,12 @@ impl<R: Runtime> GpuInference<R> {
                 w_gate: upload_matrix(&layer.w_gate),
                 w_up: upload_matrix(&layer.w_up),
                 w_down: upload_matrix(&layer.w_down),
+                bq: upload_optional(layer.bq.as_deref()),
+                bk: upload_optional(layer.bk.as_deref()),
+                bv: upload_optional(layer.bv.as_deref()),
+                bo: upload_optional(layer.bo.as_deref()),
+                attn_norm_bias: upload_optional(layer.attn_norm_bias.as_deref()),
+                ffn_norm_bias: upload_optional(layer.ffn_norm_bias.as_deref()),
             })
             .collect();
 
@@ -185,14 +187,16 @@ impl<R: Runtime> GpuInference<R> {
             token_embedding,
             layers,
             final_norm,
+            final_norm_bias,
+            position_embedding,
             lm_head,
         };
 
-        Self {
+        Ok(Self {
             backend,
             weights: gpu_weights,
             config: cfg.clone(),
-        }
+        })
     }
 
     /// Allocate empty KV cache on GPU for all layers.
@@ -549,8 +553,22 @@ mod tests {
     use nnx_transformer::model::{Model, ModelWeights};
     use nnx_transformer::weights::Matrix;
 
-    /// Create a tiny Llama-like model suitable for GPU inference testing.
-    fn tiny_gpu_model() -> Model {
+    fn all_architectures() -> Vec<Architecture> {
+        vec![
+            Architecture::Llama,
+            Architecture::GPT2,
+            Architecture::Phi,
+            Architecture::Gemma,
+            Architecture::Qwen,
+            Architecture::Mistral,
+            Architecture::CodeLlama,
+            Architecture::StableLM,
+            Architecture::Falcon,
+            Architecture::MPT,
+        ]
+    }
+
+    fn tiny_model_with_arch(arch: Architecture) -> Model {
         let hidden_dim = 8;
         let num_heads = 2;
         let num_kv_heads = 2;
@@ -558,9 +576,105 @@ mod tests {
         let intermediate_dim = 16;
         let vocab_size = 32;
 
+        let (
+            norm_type,
+            ffn_type,
+            pos_encoding,
+            block_style,
+            has_qkv_bias,
+            has_output_bias,
+            embedding_scale,
+        ) = match arch {
+            Architecture::Llama | Architecture::Mistral | Architecture::CodeLlama => (
+                NormType::RMSNorm,
+                FFNType::SwiGLU,
+                PosEncoding::RoPE {
+                    freq_base: 10000.0,
+                },
+                BlockStyle::Sequential,
+                false,
+                false,
+                None,
+            ),
+            Architecture::GPT2 => (
+                NormType::LayerNorm,
+                FFNType::GELU,
+                PosEncoding::Learned,
+                BlockStyle::Sequential,
+                true,
+                true,
+                None,
+            ),
+            Architecture::Phi => (
+                NormType::LayerNorm,
+                FFNType::SwiGLU,
+                PosEncoding::PartialRoPE {
+                    freq_base: 10000.0,
+                    rotary_dim: 2,
+                },
+                BlockStyle::Parallel,
+                true,
+                true,
+                None,
+            ),
+            Architecture::Gemma => (
+                NormType::RMSNorm,
+                FFNType::GeGLU,
+                PosEncoding::RoPE {
+                    freq_base: 10000.0,
+                },
+                BlockStyle::Sequential,
+                false,
+                false,
+                Some((hidden_dim as f32).sqrt()),
+            ),
+            Architecture::Qwen => (
+                NormType::RMSNorm,
+                FFNType::SwiGLU,
+                PosEncoding::RoPE {
+                    freq_base: 10000.0,
+                },
+                BlockStyle::Sequential,
+                true,
+                false,
+                None,
+            ),
+            Architecture::StableLM => (
+                NormType::LayerNorm,
+                FFNType::SwiGLU,
+                PosEncoding::RoPE {
+                    freq_base: 10000.0,
+                },
+                BlockStyle::Parallel,
+                true,
+                false,
+                None,
+            ),
+            Architecture::Falcon => (
+                NormType::LayerNorm,
+                FFNType::GELU,
+                PosEncoding::RoPE {
+                    freq_base: 10000.0,
+                },
+                BlockStyle::Sequential,
+                false,
+                false,
+                None,
+            ),
+            Architecture::MPT => (
+                NormType::LayerNorm,
+                FFNType::GELU,
+                PosEncoding::None,
+                BlockStyle::Sequential,
+                false,
+                false,
+                None,
+            ),
+        };
+
         let config = ModelConfig {
-            architecture: "test_llama".into(),
-            arch: Architecture::Llama,
+            architecture: format!("{:?}", arch).to_ascii_lowercase(),
+            arch: arch.clone(),
             num_layers: 2,
             hidden_dim,
             num_heads,
@@ -571,19 +685,22 @@ mod tests {
             max_context_length: 64,
             rope_freq_base: 10000.0,
             rms_norm_eps: 1e-5,
-            norm_type: NormType::RMSNorm,
-            ffn_type: FFNType::SwiGLU,
-            pos_encoding: PosEncoding::RoPE {
-                freq_base: 10000.0,
-            },
-            block_style: BlockStyle::Sequential,
-            has_qkv_bias: false,
-            has_output_bias: false,
-            embedding_scale: None,
+            norm_type,
+            ffn_type,
+            pos_encoding,
+            block_style,
+            has_qkv_bias,
+            has_output_bias,
+            embedding_scale,
         };
 
         let q_dim = num_heads * head_dim;
         let kv_dim = num_kv_heads * head_dim;
+        let attn_norm_bias = matches!(config.norm_type, NormType::LayerNorm)
+            .then(|| vec![0.0; hidden_dim]);
+        let ffn_norm_bias = (matches!(config.norm_type, NormType::LayerNorm)
+            && config.block_style == BlockStyle::Sequential)
+            .then(|| vec![0.0; hidden_dim]);
 
         let make_layer = || BlockWeights {
             attn_norm: vec![1.0; hidden_dim],
@@ -607,12 +724,12 @@ mod tests {
                 hidden_dim,
                 intermediate_dim,
             ),
-            bq: None,
-            bk: None,
-            bv: None,
-            bo: None,
-            attn_norm_bias: None,
-            ffn_norm_bias: None,
+            bq: has_qkv_bias.then(|| vec![0.001; q_dim]),
+            bk: has_qkv_bias.then(|| vec![0.001; kv_dim]),
+            bv: has_qkv_bias.then(|| vec![0.001; kv_dim]),
+            bo: has_output_bias.then(|| vec![0.001; hidden_dim]),
+            attn_norm_bias: attn_norm_bias.clone(),
+            ffn_norm_bias: ffn_norm_bias.clone(),
         };
 
         let weights = ModelWeights {
@@ -623,7 +740,8 @@ mod tests {
             ),
             layers: vec![make_layer(), make_layer()],
             final_norm: vec![1.0; hidden_dim],
-            final_norm_bias: None,
+            final_norm_bias: matches!(config.norm_type, NormType::LayerNorm)
+                .then(|| vec![0.0; hidden_dim]),
             lm_head: Matrix::dense(
                 vec![0.01; vocab_size * hidden_dim],
                 vocab_size,
@@ -632,6 +750,10 @@ mod tests {
         };
 
         Model::new(config, weights)
+    }
+
+    fn tiny_gpu_model() -> Model {
+        tiny_model_with_arch(Architecture::Llama)
     }
 
     /// Create a tiny model with varied (patterned) weights for non-trivial
@@ -728,15 +850,85 @@ mod tests {
         Model::new(config, weights)
     }
 
+    #[test]
+    fn test_model_fixture_covers_all_architectures() {
+        for arch in all_architectures() {
+            let model = tiny_model_with_arch(arch.clone());
+            assert_eq!(model.weights.layers.len(), model.config.num_layers);
+            assert_eq!(model.config.arch, arch);
+        }
+    }
+
     #[cfg(feature = "wgpu")]
     mod gpu_tests {
         use super::*;
         use cubecl::wgpu::WgpuRuntime;
 
         #[test]
+        fn test_validate_config_passes_for_all_architectures() {
+            for arch in all_architectures() {
+                let model = tiny_model_with_arch(arch.clone());
+                GpuInference::<WgpuRuntime>::validate_config(&model.config)
+                    .unwrap_or_else(|err| panic!("arch {:?} failed validation: {}", arch, err));
+            }
+        }
+
+        #[test]
+        fn test_from_model_supports_all_architectures() {
+            for arch in all_architectures() {
+                let model = tiny_model_with_arch(arch.clone());
+                let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                    .unwrap_or_else(|err| panic!("arch {:?} upload failed: {}", arch, err));
+
+                assert_eq!(gpu.config().arch, model.config.arch);
+                assert_eq!(gpu.config().norm_type, model.config.norm_type);
+                assert_eq!(gpu.config().ffn_type, model.config.ffn_type);
+                assert_eq!(gpu.config().pos_encoding, model.config.pos_encoding);
+                assert_eq!(gpu.config().block_style, model.config.block_style);
+                assert_eq!(gpu.config().has_qkv_bias, model.config.has_qkv_bias);
+                assert_eq!(gpu.config().has_output_bias, model.config.has_output_bias);
+                assert_eq!(gpu.config().embedding_scale, model.config.embedding_scale);
+            }
+        }
+
+        #[test]
+        fn test_gpu_layer_bias_upload_for_gpt2() {
+            let model = tiny_model_with_arch(Architecture::GPT2);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("GPT-2 upload should succeed");
+            let layer = &gpu.weights.layers[0];
+
+            assert!(layer.bq.is_some());
+            assert!(layer.bk.is_some());
+            assert!(layer.bv.is_some());
+            assert!(layer.bo.is_some());
+            assert!(layer.attn_norm_bias.is_some());
+            assert!(layer.ffn_norm_bias.is_some());
+            assert!(gpu.weights.final_norm_bias.is_some());
+        }
+
+        #[test]
+        fn test_gpu_position_embedding_placeholder_for_gpt2() {
+            let model = tiny_model_with_arch(Architecture::GPT2);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("GPT-2 upload should succeed");
+            let position_embedding = gpu
+                .weights
+                .position_embedding
+                .as_ref()
+                .expect("GPT-2 should allocate a learned position embedding buffer");
+
+            assert_eq!(
+                position_embedding.len,
+                model.config.max_context_length * model.config.hidden_dim,
+            );
+        }
+
+        #[test]
         fn test_gpu_forward_single_token() {
             let model = tiny_gpu_model();
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Llama upload should succeed");
             let mut cache = gpu.new_cache();
 
             let logits = gpu.forward_token(&mut cache, 0);
@@ -752,7 +944,8 @@ mod tests {
         #[test]
         fn test_gpu_forward_sequence() {
             let model = tiny_gpu_model();
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Llama upload should succeed");
             let mut cache = gpu.new_cache();
 
             for token in [1u32, 5, 10, 3] {
@@ -774,7 +967,8 @@ mod tests {
         #[test]
         fn test_gpu_forward_patterned_model() {
             let model = tiny_gpu_model_patterned();
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Patterned Llama upload should succeed");
             let mut cache = gpu.new_cache();
 
             for token in [1u32, 5, 10] {
@@ -794,7 +988,8 @@ mod tests {
             // Compare GPU and CPU forward passes on the uniform-weights model.
             let model = tiny_gpu_model();
 
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Llama upload should succeed");
             let mut gpu_cache = gpu.new_cache();
             let mut cpu_cache = model.new_cache();
 
@@ -826,7 +1021,8 @@ mod tests {
             // Compare GPU and CPU forward passes on the patterned model.
             let model = tiny_gpu_model_patterned();
 
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Patterned Llama upload should succeed");
             let mut gpu_cache = gpu.new_cache();
             let mut cpu_cache = model.new_cache();
 
@@ -856,7 +1052,8 @@ mod tests {
         #[test]
         fn test_gpu_cache_allocation() {
             let model = tiny_gpu_model();
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Llama upload should succeed");
             let cache = gpu.new_cache();
 
             assert_eq!(cache.len(), 2, "should have one cache per layer");
@@ -968,7 +1165,8 @@ mod tests {
         #[test]
         fn test_gpu_different_tokens_produce_different_logits() {
             let model = tiny_gpu_model_patterned();
-            let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+            let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+                .expect("Patterned Llama upload should succeed");
 
             let mut cache1 = gpu.new_cache();
             let logits1 = gpu.forward_token(&mut cache1, 1);
