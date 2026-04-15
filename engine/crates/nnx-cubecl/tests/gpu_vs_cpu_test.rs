@@ -160,7 +160,8 @@ fn gpu_forward_matches_cpu_forward() {
     }
 
     // --- GPU path ---
-    let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+    let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+        .expect("GPU model upload failed");
     let mut gpu_cache = gpu.new_cache();
     let mut gpu_logits_all = Vec::new();
     for &token in &tokens {
@@ -201,7 +202,8 @@ fn gpu_forward_matches_cpu_forward() {
 #[test]
 fn gpu_logits_are_finite_and_varied() {
     let model = make_test_model();
-    let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+    let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+        .expect("GPU model upload failed");
     let mut cache = gpu.new_cache();
 
     let logits = gpu.forward_token(&mut cache, 1);
@@ -225,7 +227,8 @@ fn gpu_logits_are_finite_and_varied() {
 #[test]
 fn gpu_cache_advances_position() {
     let model = make_test_model();
-    let gpu = GpuInference::<WgpuRuntime>::from_model(&model);
+    let gpu = GpuInference::<WgpuRuntime>::from_model(&model)
+        .expect("GPU model upload failed");
     let mut cache = gpu.new_cache();
 
     // Initially empty
