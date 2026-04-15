@@ -12,6 +12,7 @@ nnx-quant = { path = "../nnx-quant" }
 nnx-gguf = { path = "../nnx-gguf" }
 nnx-safetensors = { path = "../nnx-safetensors" }
 nnx-kernels = { path = "../nnx-kernels" }
+nnx-cubecl = { path = "../nnx-cubecl", optional = true }
 half.workspace = true
 rayon.workspace = true
 tracing.workspace = true
@@ -21,6 +22,10 @@ serde_json.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+
+[features]
+default = []
+gpu = ["nnx-cubecl", "nnx-cubecl/wgpu"]
 
 [lints]
 workspace = true

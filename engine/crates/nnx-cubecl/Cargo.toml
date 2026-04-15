@@ -11,8 +11,17 @@ cubecl = { version = "0.8", features = ["std"] }
 half.workspace = true
 nnx-core = { path = "../nnx-core" }
 nnx-quant = { path = "../nnx-quant" }
-nnx-serving = { path = "../nnx-serving" }
-nnx-transformer = { path = "../nnx-transformer" }
+# NOTE: nnx-serving is intentionally NOT listed here.
+# nnx-serving depends on nnx-transformer, and nnx-transformer optionally
+# depends on this crate (the `gpu` feature).  To break that cycle, PageId
+# was moved from nnx-serving into nnx-core; nnx-cubecl imports it from there.
+# NOTE: nnx-transformer is intentionally NOT listed here.
+# nnx-transformer's `gpu` feature optionally depends on this crate, so adding
+# nnx-transformer here would create a circular dependency.  The high-level
+# `from_model` constructor (which used to take an nnx-transformer::Model) has
+# been replaced by `from_raw_weights`, which accepts pre-dequantized Vec<f32>
+# slices. nnx-transformer/src/gpu.rs performs the dequantization and calls
+# from_raw_weights directly.
 
 [features]
 default = []

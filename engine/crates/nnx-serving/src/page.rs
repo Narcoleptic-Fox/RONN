@@ -3,17 +3,17 @@
 //! Each page holds a fixed number of tokens' worth of KV data for **one layer**.
 //! Layout: `[token][K|V][kv_head][head_dim]` — K and V interleaved per-token
 //! for better locality during attention (both K and V are read per position).
+//!
+//! `PageId` is defined in `nnx-core` so that GPU kernel crates can use it
+//! without depending on `nnx-serving`, which would create a circular
+//! dependency.  It is re-exported here to keep `nnx-serving`'s public API
+//! unchanged.
 
 use crate::error::{Result, ServingError};
 
-/// Opaque identifier for a physical page in the block allocator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PageId(pub u32);
-
-impl PageId {
-    /// Sentinel value for "no page" / "invalid".
-    pub const INVALID: PageId = PageId(u32::MAX);
-}
+// Re-export from nnx-core so that code importing `nnx_serving::page::PageId`
+// continues to compile unchanged.
+pub use nnx_core::PageId;
 
 /// A physical page storing KV data for one layer.
 ///

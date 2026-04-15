@@ -604,6 +604,66 @@ impl ModelConfig {
         (embed + per_layer * self.num_layers + head) as u64
     }
 
+    /// Convert to the minimal GPU configuration used by `nnx-cubecl`.
+    ///
+    /// `GpuInference` stores a `GpuConfig` rather than a `ModelConfig` so that
+    /// `nnx-cubecl` can depend only on `nnx-core` and avoid a circular
+    /// dependency with `nnx-transformer`.
+    pub fn to_gpu_config(&self) -> nnx_core::gpu_config::GpuConfig {
+        use nnx_core::gpu_config::{
+            GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
+        };
+
+        let pos_encoding = match &self.pos_encoding {
+            PosEncoding::RoPE { freq_base } => {
+                GpuPosEncoding::RoPE { freq_base: *freq_base }
+            }
+            PosEncoding::Learned => GpuPosEncoding::Learned,
+            PosEncoding::PartialRoPE { freq_base, rotary_dim } => {
+                GpuPosEncoding::PartialRoPE {
+                    freq_base: *freq_base,
+                    rotary_dim: *rotary_dim,
+                }
+            }
+            PosEncoding::None => GpuPosEncoding::None,
+        };
+
+        let norm_type = match self.norm_type {
+            NormType::RMSNorm => GpuNormType::RMSNorm,
+            NormType::LayerNorm => GpuNormType::LayerNorm,
+        };
+
+        let ffn_type = match self.ffn_type {
+            FFNType::SwiGLU => GpuFFNType::SwiGLU,
+            FFNType::GeGLU => GpuFFNType::GeGLU,
+            FFNType::GELU => GpuFFNType::GELU,
+        };
+
+        let block_style = match self.block_style {
+            BlockStyle::Sequential => GpuBlockStyle::Sequential,
+            BlockStyle::Parallel => GpuBlockStyle::Parallel,
+        };
+
+        GpuConfig {
+            num_layers: self.num_layers,
+            hidden_dim: self.hidden_dim,
+            num_heads: self.num_heads,
+            num_kv_heads: self.num_kv_heads,
+            head_dim: self.head_dim,
+            intermediate_dim: self.intermediate_dim,
+            vocab_size: self.vocab_size,
+            max_context_length: self.max_context_length,
+            pos_encoding,
+            rms_norm_eps: self.rms_norm_eps,
+            embedding_scale: self.embedding_scale,
+            norm_type,
+            ffn_type,
+            block_style,
+            has_qkv_bias: self.has_qkv_bias,
+            has_output_bias: self.has_output_bias,
+        }
+    }
+
     /// Create a default Llama-style config for testing purposes.
     #[cfg(test)]
     pub(crate) fn test_llama(

@@ -9,6 +9,7 @@ pub mod device;
 pub mod dtype;
 pub mod engine;
 pub mod error;
+pub mod gpu_config;
 pub mod shape;
 pub mod tensor;
 
@@ -20,5 +21,8 @@ pub use engine::{
     RequestHandle, TokenBatch,
 };
 pub use error::{EngineError, Result};
+pub use gpu_config::{
+    GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding, PageId,
+};
 pub use shape::Shape;
 pub use tensor::{Tensor, TensorView};

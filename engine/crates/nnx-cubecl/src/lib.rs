@@ -36,5 +36,13 @@ pub mod rope;
 pub mod softmax;
 
 pub use backend::{CubeclBackend, GpuBuffer};
-pub use inference::{GpuInference, GpuLayerCache, GpuLayerWeights, GpuModelWeights};
+pub use inference::{
+    GpuInference, GpuLayerCache, GpuLayerWeights, GpuModelWeights, RawLayerWeights,
+};
 pub use paged_kv::{GpuPagePool, GpuPhysicalPage};
+
+// Re-export the wgpu runtime so callers that use the `gpu` feature of
+// nnx-transformer can refer to `nnx_cubecl::WgpuRuntime` without needing
+// a direct dependency on the `cubecl` crate.
+#[cfg(feature = "wgpu")]
+pub use cubecl::wgpu::WgpuRuntime;

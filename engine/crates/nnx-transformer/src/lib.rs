@@ -43,6 +43,8 @@ pub mod cache;
 pub mod config;
 pub mod ffn;
 pub mod generate;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 pub mod loader;
 pub mod model;
 pub mod sampler;

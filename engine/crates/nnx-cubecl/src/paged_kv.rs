@@ -7,7 +7,7 @@
 
 use cubecl::prelude::*;
 use nnx_core::backend::KernelBackend;
-use nnx_serving::page::PageId;
+use nnx_core::PageId;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
 
