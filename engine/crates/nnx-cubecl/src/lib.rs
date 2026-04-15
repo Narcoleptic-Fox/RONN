@@ -30,8 +30,10 @@ pub mod backend;
 pub mod inference;
 pub mod matmul;
 pub mod normalization;
+pub mod paged_kv;
 pub mod rope;
 pub mod softmax;
 
 pub use backend::{CubeclBackend, GpuBuffer};
 pub use inference::{GpuInference, GpuLayerCache, GpuLayerWeights, GpuModelWeights};
+pub use paged_kv::{GpuPagePool, GpuPhysicalPage};
