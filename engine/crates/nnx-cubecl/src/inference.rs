@@ -26,14 +26,13 @@ use cubecl::prelude::*;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
 use crate::paged_kv::{
-    contiguous_to_paged_page_kernel, paged_attention_contract_kernel,
-    paged_attention_scores_kernel, paged_cache_append_kernel, paged_quantize_page_kernel,
-    paged_to_contiguous_page_kernel, GpuPagePool,
-    GpuPagedKvQuantConfig,
+    GpuPagePool, GpuPagedKvQuantConfig, contiguous_to_paged_page_kernel,
+    paged_attention_contract_kernel, paged_attention_scores_kernel, paged_cache_append_kernel,
+    paged_quantize_page_kernel, paged_to_contiguous_page_kernel,
 };
+use nnx_core::PageId;
 use nnx_core::backend::KernelBackend;
 use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
-use nnx_core::PageId;
 
 // ---------------------------------------------------------------------------
 // GPU weight storage
@@ -297,8 +296,8 @@ impl<R: Runtime> GpuInference<R> {
         let page_size = pool.page_size();
         let words_per_token = kv_dim.div_ceil(4);
         let residual_words_per_token = quantized.config().residual_words_per_token();
-        let payload_words_per_page = 2 * page_size * words_per_token
-            + page_size * num_kv_heads * residual_words_per_token;
+        let payload_words_per_page =
+            2 * page_size * words_per_token + page_size * num_kv_heads * residual_words_per_token;
 
         for page_table in page_tables {
             for page_idx in 0..full_pages {
@@ -997,11 +996,7 @@ impl<R: Runtime> GpuInference<R> {
                             .unwrap_or(dummy_u32.len),
                         1,
                     ),
-                    ArrayArg::from_raw_parts::<u32>(
-                        &page_table_gpu.handle,
-                        page_table_gpu.len,
-                        1,
-                    ),
+                    ArrayArg::from_raw_parts::<u32>(&page_table_gpu.handle, page_table_gpu.len, 1),
                     ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
                     ScalarArg::new(pool.page_stride() as u32),
                     ScalarArg::new(pool.page_size() as u32),
@@ -1035,11 +1030,7 @@ impl<R: Runtime> GpuInference<R> {
                             .unwrap_or(dummy_u32.len),
                         1,
                     ),
-                    ArrayArg::from_raw_parts::<u32>(
-                        &page_table_gpu.handle,
-                        page_table_gpu.len,
-                        1,
-                    ),
+                    ArrayArg::from_raw_parts::<u32>(&page_table_gpu.handle, page_table_gpu.len, 1),
                     ArrayArg::from_raw_parts::<f32>(&head_out.handle, head_out.len, 1),
                     ScalarArg::new(pool.page_stride() as u32),
                     ScalarArg::new(pool.page_size() as u32),

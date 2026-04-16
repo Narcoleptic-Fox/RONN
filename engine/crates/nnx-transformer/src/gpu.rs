@@ -13,11 +13,10 @@
 //! `GpuInference::from_raw_weights`, which has no dependency on
 //! `nnx-transformer`.
 
-use nnx_core::gpu_config::{GpuConfig, GpuPosEncoding};
 use nnx_core::PageId;
+use nnx_core::gpu_config::{GpuConfig, GpuPosEncoding};
 use nnx_cubecl::{
-    GpuInference, GpuLayerCache, GpuPagePool, GpuPagedKvQuantConfig, RawLayerWeights,
-    WgpuRuntime,
+    GpuInference, GpuLayerCache, GpuPagePool, GpuPagedKvQuantConfig, RawLayerWeights, WgpuRuntime,
 };
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
