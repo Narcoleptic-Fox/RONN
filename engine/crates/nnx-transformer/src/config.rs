@@ -593,6 +593,10 @@ impl ModelConfig {
     /// Total parameter count estimate.
     pub fn estimated_params(&self) -> u64 {
         let embed = self.vocab_size * self.hidden_dim;
+        let pos_embed = match self.pos_encoding {
+            PosEncoding::Learned => self.max_context_length * self.hidden_dim,
+            PosEncoding::RoPE { .. } | PosEncoding::PartialRoPE { .. } | PosEncoding::None => 0,
+        };
         let attn_per_layer = 4 * self.hidden_dim * self.hidden_dim;
         let ffn_per_layer = match self.ffn_type {
             FFNType::GELU => 2 * self.hidden_dim * self.intermediate_dim,
@@ -601,7 +605,7 @@ impl ModelConfig {
         let norm_per_layer = 2 * self.hidden_dim;
         let per_layer = attn_per_layer + ffn_per_layer + norm_per_layer;
         let head = self.hidden_dim * self.vocab_size;
-        (embed + per_layer * self.num_layers + head) as u64
+        (embed + pos_embed + per_layer * self.num_layers + head) as u64
     }
 
     /// Convert to the minimal GPU configuration used by `nnx-cubecl`.

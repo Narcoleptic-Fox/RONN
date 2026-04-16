@@ -6,12 +6,14 @@ use crate::block::{self, BlockWeights};
 use crate::cache::KVCache;
 use crate::config::{ModelConfig, NormType};
 use crate::weights::Matrix;
-use nnx_core::error::Result;
+use nnx_core::error::{EngineError, Result};
 
 /// All weights for a complete model.
 pub struct ModelWeights {
     /// Token embedding table [vocab_size, hidden_dim]
     pub token_embedding: Matrix,
+    /// Learned absolute position embedding table [max_context_length, hidden_dim]
+    pub position_embedding: Option<Matrix>,
     /// Per-layer transformer block weights.
     pub layers: Vec<BlockWeights>,
     /// Final norm weights [hidden_dim]
@@ -59,6 +61,7 @@ impl Model {
         self.weights
             .token_embedding
             .copy_row_to(token_id as usize, &mut hidden);
+        self.add_position_embedding(&mut hidden, position)?;
 
         // 1b. Gemma scales embeddings by sqrt(hidden_dim)
         if let Some(scale) = cfg.embedding_scale {
@@ -156,6 +159,7 @@ impl Model {
 
         let cfg = &self.config;
         let batch_size = token_ids.len();
+        let start_position = cache.position();
         let mut hidden_batch = vec![0.0f32; batch_size * cfg.hidden_dim];
 
         for (batch_idx, &token_id) in token_ids.iter().enumerate() {
@@ -164,6 +168,7 @@ impl Model {
             self.weights
                 .token_embedding
                 .copy_row_to(token_id as usize, dst);
+            self.add_position_embedding(dst, start_position + batch_idx)?;
             if let Some(scale) = cfg.embedding_scale {
                 for value in dst.iter_mut() {
                     *value *= scale;
@@ -219,6 +224,26 @@ impl Model {
         let mut logits = vec![0.0f32; cfg.vocab_size];
         self.weights.lm_head.matvec(&normed, &mut logits);
         Ok((logits, last_features))
+    }
+
+    fn add_position_embedding(&self, hidden: &mut [f32], position: usize) -> Result<()> {
+        if !matches!(self.config.pos_encoding, crate::config::PosEncoding::Learned) {
+            return Ok(());
+        }
+
+        let pos_emb = self.weights.position_embedding.as_ref().ok_or_else(|| {
+            EngineError::Kernel(
+                "model is configured for learned position embeddings but position_embedding weights are missing"
+                    .into(),
+            )
+        })?;
+
+        let mut pos_row = vec![0.0f32; self.config.hidden_dim];
+        pos_emb.copy_row_to(position, &mut pos_row);
+        for (dst, src) in hidden.iter_mut().zip(pos_row.iter()) {
+            *dst += *src;
+        }
+        Ok(())
     }
 }
 
@@ -379,6 +404,15 @@ mod tests {
                 vocab_size,
                 hidden_dim,
             ),
+            position_embedding: matches!(arch, Architecture::GPT2).then(|| {
+                Matrix::dense(
+                    (0..64 * hidden_dim)
+                        .map(|i| ((i % 11) as f32) * 0.01 - 0.05)
+                        .collect(),
+                    64,
+                    hidden_dim,
+                )
+            }),
             layers: vec![make_layer(), make_layer()],
             final_norm: vec![1.0; hidden_dim],
             final_norm_bias,
@@ -459,6 +493,7 @@ mod tests {
                 vocab_size,
                 hidden_dim,
             ),
+            position_embedding: None,
             layers: vec![BlockWeights {
                 attn_norm: vec![1.0; hidden_dim],
                 ffn_norm: vec![1.0; hidden_dim],
@@ -524,6 +559,78 @@ mod tests {
         let logits = model.forward_token(&mut cache, 0).unwrap();
         assert_eq!(logits.len(), 32);
         assert!(logits.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn test_gpt2_learned_positions_change_logits() {
+        let hidden_dim = 4;
+        let vocab_size = 4;
+        let config = ModelConfig {
+            architecture: "gpt2-test".into(),
+            arch: Architecture::GPT2,
+            num_layers: 0,
+            hidden_dim,
+            num_heads: 1,
+            num_kv_heads: 1,
+            head_dim: 4,
+            intermediate_dim: 8,
+            vocab_size,
+            max_context_length: 2,
+            rope_freq_base: 10000.0,
+            rms_norm_eps: 1e-5,
+            norm_type: NormType::LayerNorm,
+            ffn_type: FFNType::GELU,
+            pos_encoding: PosEncoding::Learned,
+            block_style: BlockStyle::Sequential,
+            has_qkv_bias: true,
+            has_output_bias: true,
+            embedding_scale: None,
+        };
+
+        let build_model = |position_row0: Vec<f32>| {
+            Model::new(
+                config.clone(),
+                ModelWeights {
+                    token_embedding: Matrix::dense(vec![0.0; vocab_size * hidden_dim], vocab_size, hidden_dim),
+                    position_embedding: Some(Matrix::dense(
+                        [position_row0, vec![0.0; hidden_dim]].concat(),
+                        2,
+                        hidden_dim,
+                    )),
+                    layers: vec![],
+                    final_norm: vec![1.0; hidden_dim],
+                    final_norm_bias: Some(vec![0.0; hidden_dim]),
+                    lm_head: Matrix::dense(
+                        vec![
+                            1.0, 0.0, 0.0, 0.0,
+                            0.0, 1.0, 0.0, 0.0,
+                            0.0, 0.0, 1.0, 0.0,
+                            0.0, 0.0, 0.0, 1.0,
+                        ],
+                        vocab_size,
+                        hidden_dim,
+                    ),
+                },
+            )
+        };
+
+        let model_a = build_model(vec![1.0, 0.0, 0.0, 0.0]);
+        let model_b = build_model(vec![0.0, 1.0, 0.0, 0.0]);
+
+        let mut cache_a = model_a.new_cache();
+        let mut cache_b = model_b.new_cache();
+        let logits_a = model_a.forward_token(&mut cache_a, 0).unwrap();
+        let logits_b = model_b.forward_token(&mut cache_b, 0).unwrap();
+
+        let max_diff = logits_a
+            .iter()
+            .zip(logits_b.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff > 1e-6,
+            "changing learned position embeddings should change logits"
+        );
     }
 
     #[test]

@@ -121,6 +121,7 @@ mod tests {
         let hd = 8;
         let weights = ModelWeights {
             token_embedding: Matrix::dense(vec![0.1; 32 * hd], 32, hd),
+            position_embedding: None,
             layers: vec![BlockWeights::test_no_bias(hd, 2, 2, 4, 16)],
             final_norm: vec![1.0; hd],
             final_norm_bias: None,

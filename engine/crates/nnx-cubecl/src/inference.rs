@@ -152,6 +152,7 @@ impl<R: Runtime> GpuInference<R> {
     pub fn from_raw_weights(
         config: GpuConfig,
         token_embedding: &[f32],
+        position_embedding: Option<&[f32]>,
         lm_head: &[f32],
         final_norm: &[f32],
         final_norm_bias: Option<&[f32]>,
@@ -180,10 +181,23 @@ impl<R: Runtime> GpuInference<R> {
 
         let position_embedding = match &config.pos_encoding {
             GpuPosEncoding::Learned => {
-                // Learned position embeddings are not yet stored in the CPU
-                // model weights structure.  Upload a zero placeholder so the
-                // GPU weight layout is consistent until the loader exposes them.
-                Some(backend.zeros(config.max_context_length * config.hidden_dim))
+                let expected = config.max_context_length * config.hidden_dim;
+                let data = position_embedding.ok_or_else(|| {
+                    format!(
+                        "GpuPosEncoding::Learned requires position embeddings with {} values",
+                        expected
+                    )
+                })?;
+                if data.len() != expected {
+                    return Err(format!(
+                        "position embedding has {} values, expected {} (max_context_length {} * hidden_dim {})",
+                        data.len(),
+                        expected,
+                        config.max_context_length,
+                        config.hidden_dim
+                    ));
+                }
+                Some(upload(data))
             }
             _ => None,
         };
@@ -777,6 +791,7 @@ mod tests {
         let result = GpuInference::<WgpuRuntime>::from_raw_weights(
             config,
             &vec![0.1f32; vs * hd],
+            None,
             &vec![0.01f32; vs * hd],
             &vec![1.0f32; hd],
             None,
@@ -794,6 +809,7 @@ mod tests {
         let gpu = GpuInference::<WgpuRuntime>::from_raw_weights(
             config,
             &vec![0.1f32; vs * hd],
+            None,
             &vec![0.01f32; vs * hd],
             &vec![1.0f32; hd],
             None,
@@ -821,6 +837,7 @@ mod tests {
         let gpu = GpuInference::<WgpuRuntime>::from_raw_weights(
             config.clone(),
             &vec![0.1f32; vs * hd],
+            None,
             &vec![0.01f32; vs * hd],
             &vec![1.0f32; hd],
             None,
@@ -848,11 +865,34 @@ mod tests {
         let result = GpuInference::<WgpuRuntime>::from_raw_weights(
             config,
             &vec![0.0f32; vs * hd],
+            None,
             &vec![0.0f32; vs * hd],
             &vec![1.0f32; hd],
             None,
             vec![],
         );
         assert!(result.is_err(), "should fail with mismatched layer count");
+    }
+
+    #[test]
+    fn test_from_raw_weights_rejects_missing_learned_position_embeddings() {
+        let mut config = tiny_gpu_config();
+        config.pos_encoding = GpuPosEncoding::Learned;
+        let hd = config.hidden_dim;
+        let vs = config.vocab_size;
+
+        let result = GpuInference::<WgpuRuntime>::from_raw_weights(
+            config,
+            &vec![0.1f32; vs * hd],
+            None,
+            &vec![0.01f32; vs * hd],
+            &vec![1.0f32; hd],
+            None,
+            vec![tiny_raw_layer()],
+        );
+        assert!(
+            result.is_err(),
+            "learned-position configs must reject missing position embeddings"
+        );
     }
 }

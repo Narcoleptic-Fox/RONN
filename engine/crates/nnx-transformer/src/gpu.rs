@@ -84,19 +84,7 @@ fn to_gpu_pos_encoding(enc: &PosEncoding) -> GpuPosEncoding {
 
 /// Build the `GpuConfig` from a transformer `ModelConfig`.
 fn build_gpu_config(cfg: &ModelConfig) -> GpuConfig {
-    GpuConfig {
-        num_layers: cfg.num_layers,
-        hidden_dim: cfg.hidden_dim,
-        num_heads: cfg.num_heads,
-        num_kv_heads: cfg.num_kv_heads,
-        head_dim: cfg.head_dim,
-        intermediate_dim: cfg.intermediate_dim,
-        vocab_size: cfg.vocab_size,
-        max_context_length: cfg.max_context_length,
-        pos_encoding: to_gpu_pos_encoding(&cfg.pos_encoding),
-        rms_norm_eps: cfg.rms_norm_eps,
-        embedding_scale: cfg.embedding_scale,
-    }
+    cfg.to_gpu_config()
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +101,11 @@ impl GpuModel {
         let gpu_config = build_gpu_config(cfg);
 
         let token_embedding = dequantize_matrix(&model.weights.token_embedding);
+        let position_embedding = model
+            .weights
+            .position_embedding
+            .as_ref()
+            .map(dequantize_matrix);
         let lm_head = dequantize_matrix(&model.weights.lm_head);
         let final_norm = model.weights.final_norm.clone();
         let final_norm_bias = model.weights.final_norm_bias.clone();
@@ -143,6 +136,7 @@ impl GpuModel {
         let inner = GpuInference::<WgpuRuntime>::from_raw_weights(
             gpu_config,
             &token_embedding,
+            position_embedding.as_deref(),
             &lm_head,
             &final_norm,
             final_norm_bias.as_deref(),

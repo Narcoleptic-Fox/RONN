@@ -67,6 +67,15 @@ fn load_weights(gguf: &GGUFFile, config: &ModelConfig) -> Result<ModelWeights, S
         config.vocab_size,
         config.hidden_dim,
     )?;
+    let position_embedding = match config.pos_encoding {
+        crate::config::PosEncoding::Learned => Some(load_matrix_tensor(
+            gguf,
+            "pos_embd.weight",
+            config.max_context_length,
+            config.hidden_dim,
+        )?),
+        _ => None,
+    };
 
     // Per-layer weights
     let mut layers = Vec::with_capacity(config.num_layers);
@@ -102,6 +111,7 @@ fn load_weights(gguf: &GGUFFile, config: &ModelConfig) -> Result<ModelWeights, S
 
     Ok(ModelWeights {
         token_embedding,
+        position_embedding,
         layers,
         final_norm,
         final_norm_bias,
@@ -715,6 +725,19 @@ fn load_safetensors_weights(
         config.vocab_size,
         config.hidden_dim,
     );
+    let position_embedding = match config.pos_encoding {
+        crate::config::PosEncoding::Learned => {
+            let pos_name = name_map
+                .resolve_global("pos_embd.weight")
+                .unwrap_or("transformer.wpe.weight");
+            Some(Matrix::dense(
+                load_st_tensor(st, pos_name, config.max_context_length * config.hidden_dim)?,
+                config.max_context_length,
+                config.hidden_dim,
+            ))
+        }
+        _ => None,
+    };
 
     let q_dim = config.num_heads * config.head_dim;
     let kv_dim = config.num_kv_heads * config.head_dim;
@@ -768,6 +791,7 @@ fn load_safetensors_weights(
 
     Ok(ModelWeights {
         token_embedding,
+        position_embedding,
         layers,
         final_norm,
         final_norm_bias,
@@ -843,6 +867,19 @@ fn load_safetensors_weights_sharded(
         config.vocab_size,
         config.hidden_dim,
     );
+    let position_embedding = match config.pos_encoding {
+        crate::config::PosEncoding::Learned => {
+            let pos_name = name_map
+                .resolve_global("pos_embd.weight")
+                .unwrap_or("transformer.wpe.weight");
+            Some(Matrix::dense(
+                loader.load_tensor(pos_name, config.max_context_length * config.hidden_dim)?,
+                config.max_context_length,
+                config.hidden_dim,
+            ))
+        }
+        _ => None,
+    };
 
     let q_dim = config.num_heads * config.head_dim;
     let kv_dim = config.num_kv_heads * config.head_dim;
@@ -896,6 +933,7 @@ fn load_safetensors_weights_sharded(
 
     Ok(ModelWeights {
         token_embedding,
+        position_embedding,
         layers,
         final_norm,
         final_norm_bias,
@@ -1365,6 +1403,13 @@ fn estimate_loaded_weights_memory(gguf: &GGUFFile, config: &ModelConfig) -> usiz
     let mut total = 0usize;
 
     total += estimate_dense_tensor_bytes(config.vocab_size * config.hidden_dim);
+    if matches!(config.pos_encoding, crate::config::PosEncoding::Learned) {
+        total += estimate_matrix_storage_bytes(
+            gguf,
+            "pos_embd.weight",
+            config.max_context_length * config.hidden_dim,
+        );
+    }
 
     for i in 0..config.num_layers {
         let prefix = format!("blk.{i}");
@@ -1735,6 +1780,92 @@ mod tests {
             .err()
             .expect("small budget should reject the model");
         assert!(err.contains("memory budget"));
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_load_gpt2_safetensors_includes_position_embeddings() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nnx_loader_gpt2_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let st_path = temp_dir.join("model.safetensors");
+        let config_path = temp_dir.join("config.json");
+
+        let tensors = [
+            ("transformer.wte.weight", "F32", [16usize, 8].as_slice()),
+            ("transformer.wpe.weight", "F32", [32usize, 8].as_slice()),
+            ("transformer.h.0.ln_1.weight", "F32", [8usize].as_slice()),
+            ("transformer.h.0.ln_1.bias", "F32", [8usize].as_slice()),
+            ("transformer.h.0.ln_2.weight", "F32", [8usize].as_slice()),
+            ("transformer.h.0.ln_2.bias", "F32", [8usize].as_slice()),
+            (
+                "transformer.h.0.attn.c_attn.weight",
+                "F32",
+                [24usize, 8].as_slice(),
+            ),
+            (
+                "transformer.h.0.attn.c_attn.bias",
+                "F32",
+                [24usize].as_slice(),
+            ),
+            (
+                "transformer.h.0.attn.c_proj.weight",
+                "F32",
+                [8usize, 8].as_slice(),
+            ),
+            (
+                "transformer.h.0.attn.c_proj.bias",
+                "F32",
+                [8usize].as_slice(),
+            ),
+            (
+                "transformer.h.0.mlp.c_fc.weight",
+                "F32",
+                [16usize, 8].as_slice(),
+            ),
+            (
+                "transformer.h.0.mlp.c_proj.weight",
+                "F32",
+                [8usize, 16].as_slice(),
+            ),
+            ("transformer.ln_f.weight", "F32", [8usize].as_slice()),
+            ("transformer.ln_f.bias", "F32", [8usize].as_slice()),
+            ("lm_head.weight", "F32", [16usize, 8].as_slice()),
+        ];
+        write_test_file(&st_path, &build_safetensors_bytes(&tensors));
+
+        let config_json = serde_json::json!({
+            "architectures": ["GPT2LMHeadModel"],
+            "hidden_size": 8,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "intermediate_size": 16,
+            "n_head": 2,
+            "n_embd": 8,
+            "n_layer": 1,
+            "n_positions": 32,
+            "n_ctx": 32,
+            "vocab_size": 16,
+            "max_position_embeddings": 32,
+            "layer_norm_epsilon": 1e-5
+        });
+        write_test_file(
+            &config_path,
+            serde_json::to_string(&config_json).unwrap().as_bytes(),
+        );
+
+        let model = load_safetensors_with_budget(&st_path, 0).expect("GPT-2 load should succeed");
+        assert!(
+            model.weights.position_embedding.is_some(),
+            "GPT-2 checkpoints should load learned position embeddings"
+        );
 
         std::fs::remove_dir_all(&temp_dir).ok();
     }

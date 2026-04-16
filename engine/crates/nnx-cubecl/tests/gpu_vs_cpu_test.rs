@@ -107,6 +107,7 @@ fn make_test_engine() -> GpuInference<WgpuRuntime> {
     GpuInference::<WgpuRuntime>::from_raw_weights(
         config,
         &token_embedding,
+        None,
         &lm_head,
         &final_norm,
         None,
@@ -257,6 +258,7 @@ fn gpu_from_raw_weights_rejects_wrong_layer_count() {
     let result = GpuInference::<WgpuRuntime>::from_raw_weights(
         config,
         &vec![0.0f32; vs * hd],
+        None,
         &vec![0.0f32; vs * hd],
         &vec![1.0f32; hd],
         None,

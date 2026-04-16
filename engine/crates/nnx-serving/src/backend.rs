@@ -583,6 +583,7 @@ mod tests {
                 vocab_size,
                 hidden_dim,
             ),
+            position_embedding: None,
             layers,
             final_norm: vec![1.0; hidden_dim],
             final_norm_bias: None,
