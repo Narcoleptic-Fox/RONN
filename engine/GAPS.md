@@ -28,8 +28,9 @@ NNX has a credible foundation, a functioning serving layer, and a GPU kernel lib
 
 NNX is not yet competitive as a general-purpose inference library because:
 
-- The GPU forward pass lives in `nnx-cubecl::GpuInference` as a standalone path; it is not yet wired into `nnx-transformer`'s `Model` so existing callers of `InferenceEngine` cannot transparently use GPU. This is the remaining P0 gap.
-- Async/streaming execution, quantized KV cache, LoRA, structured outputs, and multi-modal support are the next tier of work.
+- Async/streaming execution, LoRA, structured outputs, and multi-modal support are the next tier of work.
+
+The original P0 gap (GPU integration) and the quantized KV cache gap are now both closed.
 
 ## Status Summary
 
@@ -38,13 +39,14 @@ NNX is not yet competitive as a general-purpose inference library because:
 | GGUF loading                  | Partial | Works end-to-end with mixed dense/quantized matrix storage; not every tensor stays compact yet. |
 | SafeTensors loading           | Closed  | Architecture-aware HF name mapping for 5 families, fused QKV splitting, multi-shard support, config.json inference. |
 | Transformer execution (CPU)   | Closed  | Batched causal prefill, request-scoped KV, batch-safe layer features, `KVStore` trait for pluggable cache backends. |
-| Transformer execution (GPU)   | Partial | `GpuInference<R>` in `nnx-cubecl` runs full decode step on GPU (embedding → blocks → norm → logits), cross-validated. Not yet integrated into `nnx-transformer`'s `Model`/`InferenceEngine`. |
-| Quantization                  | Partial | GGUF matrix execution covers token embeddings, projection matrices, and `lm_head`, with scratch-reusing quantized prefill; activations, KV cache, and SafeTensors storage are still dense. |
+| Transformer execution (GPU)   | Closed  | `ServingEngine::new_with_device` uploads weights via `GpuModel::from_cpu_model`, dispatches prefill and decode through `GpuModel::forward_token_paged`/`forward_batch_paged`. GPU paged KV storage integrated. End-to-end serving loop tested on GPU. |
+| Quantization                  | Partial | GGUF matrix execution covers token embeddings, projection matrices, and `lm_head`. KV cache now quantized GPU-resident via TurboQuant (PolarQuant 8-bit + QJL 16-dim residual sketch, `paged_quantize_page_kernel`). Activations and SafeTensors storage are still dense. |
 | Kernel API safety             | Closed  | Public transformer runtime paths use checked RoPE/norm/cache/attention operations. Unchecked kernels kept for hot-path performance. |
 | Architecture support          | Closed  | 10 architecture profiles via data-driven registry. |
-| Serving infrastructure        | Closed  | `nnx-serving` crate with paged attention (`BlockAllocator`, `PagedLayerView`), continuous batching (`Scheduler` with prefix-aware admission), prefix caching (`PrefixCache` with capacity-bounded LRU), and `ServingEngine`. 115 tests including 30 edge cases. Hardened through 3 review rounds (8 bugs fixed). |
-| GPU kernel library            | Closed  | `nnx-cubecl` crate: CubeCL kernels for matmul, rms_norm, layer_norm, softmax, rope, silu, gelu, fused_swiglu, fused_geglu, elementwise add/mul, attention scores/contraction, embedding lookup, cache append. Tiled launches (BLOCK_SIZE=256) safe for realistic model dims. 57 GPU tests. |
+| Serving infrastructure        | Closed  | `nnx-serving` crate with paged attention, continuous batching, prefix caching, and GPU dispatch. GPU path: `ServingEngine` with `GpuModel` + `GpuPagePool`, quantized paged KV, CPU page ownership. 115+ serving tests. |
+| GPU kernel library            | Closed  | `nnx-cubecl`: CubeCL kernels for matmul, norm, softmax, rope, activations, attention scores/contraction, embedding lookup, cache append, paged KV store/load, GPU page quantization (`paged_quantize_page_kernel`). |
 | Backend abstraction           | Closed  | `KernelBackend` trait in `nnx-core` with `CpuBackend` (nnx-kernels) and `CubeclBackend<R>` (nnx-cubecl). Execution-provider pattern. |
+| KV cache quantization         | Closed  | GPU-resident TurboQuant: `paged_quantize_page_kernel` runs entirely on GPU (no CPU roundtrip). Per-channel PolarQuant (8-bit asymmetric) + QJL residual sketch (16 dims). Dequant-on-read in attention kernels. Page-size guard enforced at pool construction. |
 | Async/streaming runtime       | Missing | No async execution model, no token streaming API. `ServingEngine` is synchronous. |
 | ONNX support                  | Missing | Placeholder crate only. |
 | GGML support                  | Missing | File open works, tensor extraction does not. |
@@ -81,11 +83,7 @@ These are no longer active gaps and should stay out of the roadmap unless they r
 
 ## Critical Gaps
 
-The only remaining P0 item is wiring the GPU path into the main inference API.
-
-| Priority | Gap                                          | Why It Matters                                                                                                   |
-| -------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| P0       | GPU integration into `nnx-transformer` Model | `GpuInference<R>` works standalone but callers of `InferenceEngine` (RONN's HRM, speculative decoding, `ServingEngine`) cannot use GPU yet. Making `Model` generic over `KernelBackend` or adding a `GpuNnxBackend` that implements `InferenceEngine` would close this gap. |
+No remaining P0 gaps. All critical items are closed.
 
 ## Active Implementation Gaps
 
@@ -93,7 +91,7 @@ The only remaining P0 item is wiring the GPU path into the main inference API.
 | -------- | ---------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | P1       | Async/streaming execution API            | Missing | `ServingEngine` is synchronous. Non-blocking token streaming and modern server integration require an async runtime wrapper.              |
 | P1       | SafeTensors execution storage            | Partial | SafeTensors tensors still materialize to dense `f32`; compact runtime storage is currently GGUF-first.                                  |
-| P1       | Deeper quantized runtime                 | Partial | Matrix weights now stay compact on the GGUF path, but activations, KV cache, and non-matmul state are still dense runtime structures.  |
+| P1       | Deeper quantized runtime                 | Partial | Matrix weights stay compact on the GGUF path; KV cache is now quantized on GPU (TurboQuant). Activations and non-matmul state are still dense. |
 | P1       | ONNX loader implementation               | Missing | `nnx-onnx` is still placeholder-only.                                                                                                    |
 | P1       | GGML tensor extraction                   | Missing | `nnx-ggml` opens files but does not parse architecture-specific tensors.                                                                 |
 | P2       | Property-based parser tests              | Partial | Parser coverage is much better, but property-based testing and corpus-driven fuzzing are still missing.                                  |
@@ -162,12 +160,13 @@ These are worthwhile, but they should not outrank the critical and parity items 
 
 1. ~~Build paged attention, prefix caching, and continuous batching as the serving core.~~ **Done.** `nnx-serving` crate with `ServingEngine`, 115 tests, bit-for-bit cross-validated, hardened through 3 review rounds.
 2. ~~Add a real GPU/backend abstraction.~~ **Done.** `KernelBackend` trait, `CpuBackend`, `CubeclBackend<R>`, `GpuInference<R>` with full forward pass. 57 GPU tests.
-3. **Wire GPU into the main inference API.** Either make `nnx-transformer::Model` generic over `KernelBackend`, or add a `GpuNnxBackend` implementing `InferenceEngine`. This is the remaining P0. **This is the next step.**
-4. Add async/streaming execution API on top of `ServingEngine` for real server integration.
-5. Finish SafeTensors compact execution storage and deeper quantized runtime (activations, KV cache — TurboQuant for KV).
-6. Add LoRA, structured outputs, and speculative decoding on top of the serving foundation.
-7. Finish ONNX and GGML loader paths.
-8. Expand into encoder-decoder, speech, and multimodal support.
+3. ~~Wire GPU into the main inference API.~~ **Done.** `ServingEngine::new_with_device`, `GpuModel::from_cpu_model`, paged GPU KV storage, GPU prefill/decode dispatch. GPU-serving integration tests passing.
+4. ~~Add TurboQuant KV cache quantization.~~ **Done.** `paged_quantize_page_kernel` (CubeCL, no CPU roundtrip). PolarQuant 8-bit + QJL 16-dim residual. Dequant-on-read in attention kernels. Page-size guard at pool construction.
+5. **Add async/streaming execution API** on top of `ServingEngine` for real server integration. **This is the next step.**
+6. Finish SafeTensors compact execution storage and activation quantization.
+7. Add LoRA, structured outputs, and speculative decoding on top of the serving foundation.
+8. Finish ONNX and GGML loader paths.
+9. Expand into encoder-decoder, speech, and multimodal support.
 
 ## Competitive Baseline To Keep In Mind
 
