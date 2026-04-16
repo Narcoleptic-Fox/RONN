@@ -12,12 +12,7 @@ use cubecl::prelude::*;
 /// Thread 0 in each cube does the full dot product (correct first,
 /// parallel reduction optimization later).
 #[cube(launch)]
-pub fn matvec_kernel(
-    matrix: &Array<f32>,
-    vector: &Array<f32>,
-    output: &mut Array<f32>,
-    k: u32,
-) {
+pub fn matvec_kernel(matrix: &Array<f32>, vector: &Array<f32>, output: &mut Array<f32>, k: u32) {
     let row = CUBE_POS_X;
     let tid = UNIT_POS_X;
 
@@ -51,14 +46,61 @@ pub fn matvec_bias_kernel(
     }
 }
 
+/// Batched matrix-vector multiply: `Y = A @ X`.
+///
+/// `matrix` is `[m, k]`, `vectors` is `[batch_size, k]`, and `output` is
+/// `[batch_size, m]` flattened row-major.
+#[cube(launch)]
+pub fn matvec_batch_kernel(
+    matrix: &Array<f32>,
+    vectors: &Array<f32>,
+    output: &mut Array<f32>,
+    m: u32,
+    k: u32,
+) {
+    let idx = CUBE_POS_X;
+    let tid = UNIT_POS_X;
+
+    if tid == 0u32 {
+        let row = idx % m;
+        let batch = idx / m;
+        let vector_base = batch * k;
+        let mut sum = 0.0f32;
+        for col in 0..k {
+            sum += matrix[row * k + col] * vectors[vector_base + col];
+        }
+        output[batch * m + row] = sum;
+    }
+}
+
+/// Batched matrix-vector multiply with bias: `Y = A @ X + bias`.
+#[cube(launch)]
+pub fn matvec_batch_bias_kernel(
+    matrix: &Array<f32>,
+    vectors: &Array<f32>,
+    bias: &Array<f32>,
+    output: &mut Array<f32>,
+    m: u32,
+    k: u32,
+) {
+    let idx = CUBE_POS_X;
+    let tid = UNIT_POS_X;
+
+    if tid == 0u32 {
+        let row = idx % m;
+        let batch = idx / m;
+        let vector_base = batch * k;
+        let mut sum = 0.0f32;
+        for col in 0..k {
+            sum += matrix[row * k + col] * vectors[vector_base + col];
+        }
+        output[batch * m + row] = sum + bias[row];
+    }
+}
+
 /// Dot product: `output[0] = sum(a[i] * b[i])`.
 #[cube(launch)]
-pub fn dot_kernel(
-    a: &Array<f32>,
-    b: &Array<f32>,
-    output: &mut Array<f32>,
-    len: u32,
-) {
+pub fn dot_kernel(a: &Array<f32>, b: &Array<f32>, output: &mut Array<f32>, len: u32) {
     let tid = UNIT_POS_X;
 
     if tid == 0u32 {

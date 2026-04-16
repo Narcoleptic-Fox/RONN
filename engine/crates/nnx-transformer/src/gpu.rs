@@ -15,6 +15,8 @@
 
 use nnx_core::gpu_config::{GpuConfig, GpuPosEncoding};
 use nnx_cubecl::{GpuInference, GpuLayerCache, RawLayerWeights, WgpuRuntime};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::config::{ModelConfig, PosEncoding};
 use crate::model::Model;
@@ -27,6 +29,10 @@ use crate::weights::Matrix;
 /// so that `NnxBackend` doesn't need to be generic.
 pub struct GpuModel {
     pub(crate) inner: GpuInference<WgpuRuntime>,
+    #[cfg(test)]
+    forward_token_calls: AtomicUsize,
+    #[cfg(test)]
+    forward_batch_calls: AtomicUsize,
 }
 
 /// GPU-resident KV cache for a single request/session.
@@ -34,7 +40,7 @@ pub struct GpuModel {
 /// Mirrors the logical structure of `KVCache` but with all buffers on GPU.
 /// The `position` field tracks how many tokens have been processed; it
 /// exactly matches the `len` field on each `GpuLayerCache` entry (they
-/// are always kept in sync by `forward_token`).
+/// are always kept in sync by `forward_token` and `forward_batch`).
 pub struct GpuRequestCache {
     pub(crate) cache: Vec<GpuLayerCache>,
     /// Current number of tokens in the cache (= seq_len for the next decode).
@@ -72,9 +78,14 @@ fn dequantize_matrix(matrix: &Matrix) -> Vec<f32> {
 /// stored inside `GpuConfig`.
 fn to_gpu_pos_encoding(enc: &PosEncoding) -> GpuPosEncoding {
     match enc {
-        PosEncoding::RoPE { freq_base } => GpuPosEncoding::RoPE { freq_base: *freq_base },
+        PosEncoding::RoPE { freq_base } => GpuPosEncoding::RoPE {
+            freq_base: *freq_base,
+        },
         PosEncoding::Learned => GpuPosEncoding::Learned,
-        PosEncoding::PartialRoPE { freq_base, rotary_dim } => GpuPosEncoding::PartialRoPE {
+        PosEncoding::PartialRoPE {
+            freq_base,
+            rotary_dim,
+        } => GpuPosEncoding::PartialRoPE {
             freq_base: *freq_base,
             rotary_dim: *rotary_dim,
         },
@@ -143,7 +154,13 @@ impl GpuModel {
             layers,
         )?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            #[cfg(test)]
+            forward_token_calls: AtomicUsize::new(0),
+            #[cfg(test)]
+            forward_batch_calls: AtomicUsize::new(0),
+        })
     }
 
     /// Allocate an empty GPU KV cache for this model.
@@ -162,8 +179,20 @@ impl GpuModel {
     ///
     /// Increments `cache.position` by 1.
     pub fn forward_token(&self, cache: &mut GpuRequestCache, token_id: u32) -> Vec<f32> {
+        #[cfg(test)]
+        self.forward_token_calls.fetch_add(1, Ordering::Relaxed);
         let logits = self.inner.forward_token(&mut cache.cache, token_id);
         cache.position += 1;
+        logits
+    }
+
+    /// Run prompt prefill for a batch of tokens, returning logits for the last token.
+    pub fn forward_batch(&self, cache: &mut GpuRequestCache, token_ids: &[u32]) -> Vec<f32> {
+        #[cfg(test)]
+        self.forward_batch_calls.fetch_add(1, Ordering::Relaxed);
+
+        let logits = self.inner.forward_batch(&mut cache.cache, token_ids);
+        cache.position += token_ids.len();
         logits
     }
 
@@ -175,6 +204,20 @@ impl GpuModel {
     /// Vocabulary size (convenience accessor for NnxBackend dispatch).
     pub fn vocab_size(&self) -> usize {
         self.inner.config().vocab_size
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_call_counts(&self) {
+        self.forward_token_calls.store(0, Ordering::Relaxed);
+        self.forward_batch_calls.store(0, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn call_counts(&self) -> (usize, usize) {
+        (
+            self.forward_token_calls.load(Ordering::Relaxed),
+            self.forward_batch_calls.load(Ordering::Relaxed),
+        )
     }
 }
 

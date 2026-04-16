@@ -317,10 +317,8 @@ impl InferenceEngine for NnxBackend {
                     let tokenizer = load_tokenizer(path);
                     let info = build_model_info(&cpu_model, path)?;
 
-                    let gpu_model =
-                        crate::gpu::GpuModel::from_cpu_model(&cpu_model).map_err(|e| {
-                            EngineError::Device(format!("GPU upload failed: {}", e))
-                        })?;
+                    let gpu_model = crate::gpu::GpuModel::from_cpu_model(&cpu_model)
+                        .map_err(|e| EngineError::Device(format!("GPU upload failed: {}", e)))?;
 
                     info!(
                         "Model loaded (GPU): {} — {}L/{}H/{} — {:.1}B params",
@@ -368,9 +366,7 @@ impl InferenceEngine for NnxBackend {
         let cache = match loaded {
             LoadedModel::Cpu { model, .. } => RequestCache::Cpu(model.new_cache()),
             #[cfg(feature = "gpu")]
-            LoadedModel::Gpu { gpu_model, .. } => {
-                RequestCache::Gpu(gpu_model.new_cache())
-            }
+            LoadedModel::Gpu { gpu_model, .. } => RequestCache::Gpu(gpu_model.new_cache()),
         };
 
         let request_id = self.next_request();
@@ -601,8 +597,7 @@ fn forward_cpu(
                 .into_iter()
                 .map(|(layer_idx, data)| {
                     let len = data.len();
-                    Tensor::from_f32(&data, Shape::new(&[len]))
-                        .map(|tensor| (layer_idx, tensor))
+                    Tensor::from_f32(&data, Shape::new(&[len])).map(|tensor| (layer_idx, tensor))
                 })
                 .collect::<Result<Vec<_>>>()?;
             layer_features = Some(tensors);
@@ -793,8 +788,8 @@ fn forward_gpu(
     let mut all_logits = Vec::with_capacity(batch_size * vocab_size);
 
     // For single-sequence input (most common decode step):
-    // Each sequence in the batch is processed independently.  Multi-sequence
-    // batches iterate sequentially because full GPU batching is a follow-up.
+    // Multi-token prompts use the GPU batched prefill path; single tokens keep
+    // using the decode path to preserve the existing step-by-step behavior.
     if input.batch_size() <= 1 {
         let seq = input.token_ids.first().map(Vec::as_slice).unwrap_or(&[]);
         let position = *input.positions.first().unwrap_or(&0);
@@ -812,14 +807,12 @@ fn forward_gpu(
         if seq.is_empty() {
             // No tokens: return zero logits (matches CPU behaviour).
             all_logits.extend(std::iter::repeat(0.0f32).take(vocab_size));
+        } else if seq.len() > 1 {
+            let logits = gpu_model.forward_batch(gpu_cache, seq);
+            all_logits = logits;
         } else {
-            // Prefill: push tokens one at a time.  Full GPU prefill (batched
-            // parallel attention over the prompt) is a future improvement.
-            for &token_id in seq {
-                let logits = gpu_model.forward_token(gpu_cache, token_id);
-                // Only the logits from the final token are returned.
-                all_logits = logits;
-            }
+            let logits = gpu_model.forward_token(gpu_cache, seq[0]);
+            all_logits = logits;
         }
     } else {
         // Multi-sequence batch: each sequence branches from the base position
@@ -839,12 +832,10 @@ fn forward_gpu(
 
             let logits = if seq.is_empty() {
                 std::iter::repeat(0.0f32).take(vocab_size).collect()
+            } else if seq.len() > 1 {
+                gpu_model.forward_batch(gpu_cache, seq)
             } else {
-                let mut last = Vec::new();
-                for &token_id in seq {
-                    last = gpu_model.forward_token(gpu_cache, token_id);
-                }
-                last
+                gpu_model.forward_token(gpu_cache, seq[0])
             };
             all_logits.extend_from_slice(&logits);
 
@@ -854,8 +845,7 @@ fn forward_gpu(
         }
     }
 
-    let logits_tensor =
-        Tensor::from_f32(&all_logits, Shape::new(&[batch_size, vocab_size]))?;
+    let logits_tensor = Tensor::from_f32(&all_logits, Shape::new(&[batch_size, vocab_size]))?;
 
     Ok(GenerationOutput {
         logits: logits_tensor,
@@ -1269,6 +1259,41 @@ mod tests {
             assert_eq!(backend.cache_position(request_handle).unwrap(), 3);
         }
 
+        /// Multi-token prompt prefill must dispatch to `GpuModel::forward_batch`
+        /// instead of looping through `forward_token`.
+        #[test]
+        fn test_gpu_prefill_dispatches_to_batch_path() {
+            let (backend, _model_handle, request_handle) = backend_with_gpu_model();
+
+            let model_id = {
+                let requests = backend.requests.lock().unwrap();
+                requests.get(&request_handle.0).unwrap().model_id
+            };
+
+            {
+                let models = backend.models.lock().unwrap();
+                let LoadedModel::Gpu { gpu_model, .. } = models.get(&model_id).unwrap() else {
+                    panic!("expected GPU-loaded model in test");
+                };
+                gpu_model.reset_call_counts();
+            }
+
+            backend
+                .forward(request_handle, &TokenBatch::single(vec![1, 2, 3], 0))
+                .unwrap();
+
+            let counts = {
+                let models = backend.models.lock().unwrap();
+                let LoadedModel::Gpu { gpu_model, .. } = models.get(&model_id).unwrap() else {
+                    panic!("expected GPU-loaded model in test");
+                };
+                gpu_model.call_counts()
+            };
+
+            assert_eq!(counts.0, 0, "GPU prefill should not use token decode");
+            assert_eq!(counts.1, 1, "GPU prefill should call the batched path once");
+        }
+
         /// GPU and CPU produce logits of the same shape; they won't be numerically
         /// identical because the GPU path uses different kernel precision, but
         /// we can at least verify they agree in shape and are finite.
@@ -1304,11 +1329,14 @@ mod tests {
                     quantization: "f32".into(),
                 };
                 let id = backend.next_handle();
-                backend
-                    .models
-                    .lock()
-                    .unwrap()
-                    .insert(id, LoadedModel::Cpu { model, tokenizer: None, info });
+                backend.models.lock().unwrap().insert(
+                    id,
+                    LoadedModel::Cpu {
+                        model,
+                        tokenizer: None,
+                        info,
+                    },
+                );
                 let mh = ModelHandle(id);
                 let rh = backend.create_request(mh).unwrap();
                 (backend, mh, rh)
@@ -1331,6 +1359,37 @@ mod tests {
             assert!(
                 gpu_logits.iter().all(|v| v.is_finite()),
                 "GPU logits contained non-finite values"
+            );
+        }
+
+        /// A multi-token prefill should match the CPU batch path closely.
+        #[test]
+        fn test_gpu_prefill_matches_cpu_batch_logits() {
+            let (cpu_backend, _cpu_model, cpu_request) = super::backend_with_tiny_model();
+            let (gpu_backend, _gpu_model, gpu_request) = backend_with_gpu_model();
+
+            let input = TokenBatch::single(vec![1, 2, 3], 0);
+
+            let cpu_output = cpu_backend.forward(cpu_request, &input).unwrap();
+            let gpu_output = gpu_backend.forward(gpu_request, &input).unwrap();
+
+            assert_eq!(
+                cpu_output.logits.shape().dims(),
+                gpu_output.logits.shape().dims(),
+                "prefill logits tensor shape must match"
+            );
+
+            let cpu_logits = cpu_output.logits.as_f32();
+            let gpu_logits = gpu_output.logits.as_f32();
+
+            let max_diff = cpu_logits
+                .iter()
+                .zip(gpu_logits.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(
+                max_diff < 1e-1,
+                "GPU prefill logits diverged from CPU batch path by {max_diff}"
             );
         }
 

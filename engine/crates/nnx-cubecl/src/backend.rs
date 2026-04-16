@@ -218,16 +218,19 @@ impl<R: Runtime> KernelBackend for CubeclBackend<R> {
         output: &mut Self::Buffer,
         eps: f32,
     ) {
-        let hidden_dim = x.len;
+        let hidden_dim = weight.len;
+        debug_assert!(hidden_dim > 0);
+        debug_assert_eq!(x.len % hidden_dim, 0);
+        let num_vectors = x.len / hidden_dim;
 
         unsafe {
             crate::normalization::rms_norm_kernel::launch::<R>(
                 &self.client,
-                CubeCount::Static(1, 1, 1),
+                CubeCount::Static(num_vectors as u32, 1, 1),
                 CubeDim::new(1, 1, 1),
-                ArrayArg::from_raw_parts::<f32>(&x.handle, hidden_dim, 1),
+                ArrayArg::from_raw_parts::<f32>(&x.handle, x.len, 1),
                 ArrayArg::from_raw_parts::<f32>(&weight.handle, hidden_dim, 1),
-                ArrayArg::from_raw_parts::<f32>(&output.handle, hidden_dim, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, x.len, 1),
                 ScalarArg::new(hidden_dim as u32),
                 ScalarArg::new(eps),
             );

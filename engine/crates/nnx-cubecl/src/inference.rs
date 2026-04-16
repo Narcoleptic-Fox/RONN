@@ -19,16 +19,14 @@
 //!
 //! - Weight upload supports all 10 architecture profiles defined by
 //!   `nnx-transformer`.
-//! - The forward pass executes the v1 path:
+//! - The forward pass executes the v1 path for both decode and prompt prefill:
 //!   RMSNorm + SwiGLU + full RoPE + sequential blocks.
 
 use cubecl::prelude::*;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
 use nnx_core::backend::KernelBackend;
-use nnx_core::gpu_config::{
-    GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
-};
+use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
 
 // ---------------------------------------------------------------------------
 // GPU weight storage
@@ -171,8 +169,7 @@ impl<R: Runtime> GpuInference<R> {
         let backend = CubeclBackend::<R>::new();
 
         let upload = |data: &[f32]| -> GpuBuffer { backend.from_f32(data) };
-        let upload_optional =
-            |data: Option<&[f32]>| -> Option<GpuBuffer> { data.map(upload) };
+        let upload_optional = |data: Option<&[f32]>| -> Option<GpuBuffer> { data.map(upload) };
 
         let token_embedding_buf = upload(token_embedding);
         let lm_head_buf = upload(lm_head);
@@ -319,6 +316,117 @@ impl<R: Runtime> GpuInference<R> {
         }
     }
 
+    fn lookup_embedding_batch(
+        &self,
+        embedding: &GpuBuffer,
+        token_ids: &GpuBuffer,
+        output: &mut GpuBuffer,
+        hidden_dim: usize,
+    ) {
+        let batch_size = token_ids.len;
+        unsafe {
+            crate::attention::embedding_lookup_batch_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static((batch_size * hidden_dim) as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&embedding.handle, embedding.len, 1),
+                ArrayArg::from_raw_parts::<u32>(&token_ids.handle, token_ids.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, output.len, 1),
+                ScalarArg::new(hidden_dim as u32),
+            );
+        }
+    }
+
+    fn add_embedding_batch(
+        &self,
+        embedding: &GpuBuffer,
+        token_ids: &GpuBuffer,
+        output: &mut GpuBuffer,
+        hidden_dim: usize,
+    ) {
+        let batch_size = token_ids.len;
+        unsafe {
+            crate::attention::embedding_add_batch_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static((batch_size * hidden_dim) as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&embedding.handle, embedding.len, 1),
+                ArrayArg::from_raw_parts::<u32>(&token_ids.handle, token_ids.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, output.len, 1),
+                ScalarArg::new(hidden_dim as u32),
+            );
+        }
+    }
+
+    fn append_cache_batch(
+        &self,
+        source: &GpuBuffer,
+        cache_buf: &mut GpuBuffer,
+        start_position: usize,
+        kv_dim: usize,
+        batch_size: usize,
+    ) {
+        unsafe {
+            crate::attention::cache_append_batch_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static((batch_size * kv_dim) as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&source.handle, source.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&cache_buf.handle, cache_buf.len, 1),
+                ScalarArg::new(start_position as u32),
+                ScalarArg::new(kv_dim as u32),
+            );
+        }
+    }
+
+    fn matvec_batch(
+        &self,
+        matrix: &GpuBuffer,
+        vectors: &GpuBuffer,
+        output: &mut GpuBuffer,
+        m: usize,
+        k: usize,
+    ) {
+        let batch_size = vectors.len / k;
+        unsafe {
+            crate::matmul::matvec_batch_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static((batch_size * m) as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&matrix.handle, matrix.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&vectors.handle, vectors.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, output.len, 1),
+                ScalarArg::new(m as u32),
+                ScalarArg::new(k as u32),
+            );
+        }
+    }
+
+    fn matvec_batch_bias(
+        &self,
+        matrix: &GpuBuffer,
+        vectors: &GpuBuffer,
+        bias: &GpuBuffer,
+        output: &mut GpuBuffer,
+        m: usize,
+        k: usize,
+    ) {
+        let batch_size = vectors.len / k;
+        unsafe {
+            crate::matmul::matvec_batch_bias_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static((batch_size * m) as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&matrix.handle, matrix.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&vectors.handle, vectors.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&bias.handle, bias.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, output.len, 1),
+                ScalarArg::new(m as u32),
+                ScalarArg::new(k as u32),
+            );
+        }
+    }
+
     fn append_cache_value(
         &self,
         data: &GpuBuffer,
@@ -427,12 +535,22 @@ impl<R: Runtime> GpuInference<R> {
         match &cfg.pos_encoding {
             GpuPosEncoding::RoPE { freq_base } => {
                 for h in 0..cfg.num_heads {
-                    self.backend
-                        .rope_inplace(q, h * cfg.head_dim, cfg.head_dim, position, *freq_base);
+                    self.backend.rope_inplace(
+                        q,
+                        h * cfg.head_dim,
+                        cfg.head_dim,
+                        position,
+                        *freq_base,
+                    );
                 }
                 for h in 0..cfg.num_kv_heads {
-                    self.backend
-                        .rope_inplace(k, h * cfg.head_dim, cfg.head_dim, position, *freq_base);
+                    self.backend.rope_inplace(
+                        k,
+                        h * cfg.head_dim,
+                        cfg.head_dim,
+                        position,
+                        *freq_base,
+                    );
                 }
             }
             GpuPosEncoding::PartialRoPE {
@@ -572,6 +690,300 @@ impl<R: Runtime> GpuInference<R> {
         self.project_attention_output(layer, attn_output, proj_out);
     }
 
+    fn project_qkv_batch(
+        &self,
+        layer: &GpuLayerWeights,
+        input: &GpuBuffer,
+        batch_size: usize,
+        q: &mut GpuBuffer,
+        k: &mut GpuBuffer,
+        v: &mut GpuBuffer,
+    ) {
+        let cfg = &self.config;
+        let hidden_dim = cfg.hidden_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+
+        if cfg.has_qkv_bias {
+            self.matvec_batch_bias(
+                &layer.wq,
+                input,
+                layer.bq.as_ref().expect("missing Q bias"),
+                q,
+                q_dim,
+                hidden_dim,
+            );
+            self.matvec_batch_bias(
+                &layer.wk,
+                input,
+                layer.bk.as_ref().expect("missing K bias"),
+                k,
+                kv_dim,
+                hidden_dim,
+            );
+            self.matvec_batch_bias(
+                &layer.wv,
+                input,
+                layer.bv.as_ref().expect("missing V bias"),
+                v,
+                kv_dim,
+                hidden_dim,
+            );
+        } else {
+            self.matvec_batch(&layer.wq, input, q, q_dim, hidden_dim);
+            self.matvec_batch(&layer.wk, input, k, kv_dim, hidden_dim);
+            self.matvec_batch(&layer.wv, input, v, kv_dim, hidden_dim);
+        }
+
+        debug_assert_eq!(input.len / hidden_dim, batch_size);
+    }
+
+    fn apply_rope_batch(
+        &self,
+        q: &mut GpuBuffer,
+        k: &mut GpuBuffer,
+        start_position: usize,
+        batch_size: usize,
+    ) {
+        let cfg = &self.config;
+        match &cfg.pos_encoding {
+            GpuPosEncoding::RoPE { freq_base } => {
+                for token_idx in 0..batch_size {
+                    let position = start_position + token_idx;
+                    let q_base = token_idx * cfg.num_heads * cfg.head_dim;
+                    let k_base = token_idx * cfg.num_kv_heads * cfg.head_dim;
+                    for h in 0..cfg.num_heads {
+                        self.backend.rope_inplace(
+                            q,
+                            q_base + h * cfg.head_dim,
+                            cfg.head_dim,
+                            position,
+                            *freq_base,
+                        );
+                    }
+                    for h in 0..cfg.num_kv_heads {
+                        self.backend.rope_inplace(
+                            k,
+                            k_base + h * cfg.head_dim,
+                            cfg.head_dim,
+                            position,
+                            *freq_base,
+                        );
+                    }
+                }
+            }
+            GpuPosEncoding::PartialRoPE {
+                freq_base,
+                rotary_dim,
+            } => {
+                for token_idx in 0..batch_size {
+                    let position = start_position + token_idx;
+                    let q_base = token_idx * cfg.num_heads * cfg.head_dim;
+                    let k_base = token_idx * cfg.num_kv_heads * cfg.head_dim;
+                    for h in 0..cfg.num_heads {
+                        self.backend.partial_rope_inplace(
+                            q,
+                            q_base + h * cfg.head_dim,
+                            cfg.head_dim,
+                            *rotary_dim,
+                            position,
+                            *freq_base,
+                        );
+                    }
+                    for h in 0..cfg.num_kv_heads {
+                        self.backend.partial_rope_inplace(
+                            k,
+                            k_base + h * cfg.head_dim,
+                            cfg.head_dim,
+                            *rotary_dim,
+                            position,
+                            *freq_base,
+                        );
+                    }
+                }
+            }
+            GpuPosEncoding::Learned | GpuPosEncoding::None => {}
+        }
+    }
+
+    fn project_attention_output_batch(
+        &self,
+        layer: &GpuLayerWeights,
+        attn_output: &GpuBuffer,
+        proj_out: &mut GpuBuffer,
+    ) {
+        let cfg = &self.config;
+        let hidden_dim = cfg.hidden_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        if cfg.has_output_bias {
+            self.matvec_batch_bias(
+                &layer.wo,
+                attn_output,
+                layer.bo.as_ref().expect("missing output bias"),
+                proj_out,
+                hidden_dim,
+                q_dim,
+            );
+        } else {
+            self.matvec_batch(&layer.wo, attn_output, proj_out, hidden_dim, q_dim);
+        }
+    }
+
+    fn run_attention_batch(
+        &self,
+        layer: &GpuLayerWeights,
+        layer_cache: &mut GpuLayerCache,
+        start_position: usize,
+        batch_size: usize,
+        q: &GpuBuffer,
+        k: &mut GpuBuffer,
+        v: &mut GpuBuffer,
+        attn_output: &mut GpuBuffer,
+        scores: &mut GpuBuffer,
+    ) {
+        let cfg = &self.config;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        let seq_len = start_position + batch_size;
+        let heads_per_kv = cfg.num_heads / cfg.num_kv_heads;
+        let scale = 1.0f32 / (cfg.head_dim as f32).sqrt();
+
+        self.append_cache_batch(k, &mut layer_cache.keys, start_position, kv_dim, batch_size);
+        self.append_cache_batch(
+            v,
+            &mut layer_cache.values,
+            start_position,
+            kv_dim,
+            batch_size,
+        );
+        layer_cache.len = seq_len;
+
+        for h in 0..cfg.num_heads {
+            let kv_head = h / heads_per_kv;
+            let head_offset = h * cfg.head_dim;
+
+            unsafe {
+                crate::attention::attention_scores_batch_kernel::launch::<R>(
+                    self.backend.client(),
+                    CubeCount::Static((batch_size * seq_len) as u32, 1, 1),
+                    CubeDim::new(1, 1, 1),
+                    ArrayArg::from_raw_parts::<f32>(&q.handle, q.len, 1),
+                    ArrayArg::from_raw_parts::<f32>(
+                        &layer_cache.keys.handle,
+                        layer_cache.keys.len,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
+                    ScalarArg::new(q_dim as u32),
+                    ScalarArg::new(cfg.head_dim as u32),
+                    ScalarArg::new(kv_dim as u32),
+                    ScalarArg::new(head_offset as u32),
+                    ScalarArg::new(kv_head as u32),
+                    ScalarArg::new(seq_len as u32),
+                    ScalarArg::new(start_position as u32),
+                    ScalarArg::new(scale),
+                );
+            }
+
+            for token_idx in 0..batch_size {
+                self.backend
+                    .softmax_inplace(scores, token_idx * seq_len, seq_len);
+            }
+
+            unsafe {
+                crate::attention::attention_contract_batch_kernel::launch::<R>(
+                    self.backend.client(),
+                    CubeCount::Static((batch_size * cfg.head_dim) as u32, 1, 1),
+                    CubeDim::new(1, 1, 1),
+                    ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
+                    ArrayArg::from_raw_parts::<f32>(
+                        &layer_cache.values.handle,
+                        layer_cache.values.len,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<f32>(&attn_output.handle, attn_output.len, 1),
+                    ScalarArg::new(q_dim as u32),
+                    ScalarArg::new(cfg.head_dim as u32),
+                    ScalarArg::new(kv_dim as u32),
+                    ScalarArg::new(head_offset as u32),
+                    ScalarArg::new(kv_head as u32),
+                    ScalarArg::new(seq_len as u32),
+                );
+            }
+        }
+
+        debug_assert_eq!(layer_cache.len, seq_len);
+    }
+
+    fn compute_ffn_batch(
+        &self,
+        layer: &GpuLayerWeights,
+        input: &GpuBuffer,
+        batch_size: usize,
+        gate: &mut GpuBuffer,
+        up: &mut GpuBuffer,
+        down: &mut GpuBuffer,
+    ) {
+        let cfg = &self.config;
+        match cfg.ffn_type {
+            GpuFFNType::SwiGLU => {
+                self.matvec_batch(
+                    &layer.w_gate,
+                    input,
+                    gate,
+                    cfg.intermediate_dim,
+                    cfg.hidden_dim,
+                );
+                self.matvec_batch(&layer.w_up, input, up, cfg.intermediate_dim, cfg.hidden_dim);
+                self.backend.fused_swiglu(gate, up);
+                self.matvec_batch(
+                    &layer.w_down,
+                    gate,
+                    down,
+                    cfg.hidden_dim,
+                    cfg.intermediate_dim,
+                );
+            }
+            GpuFFNType::GeGLU => {
+                self.matvec_batch(
+                    &layer.w_gate,
+                    input,
+                    gate,
+                    cfg.intermediate_dim,
+                    cfg.hidden_dim,
+                );
+                self.matvec_batch(&layer.w_up, input, up, cfg.intermediate_dim, cfg.hidden_dim);
+                self.backend.fused_geglu(gate, up);
+                self.matvec_batch(
+                    &layer.w_down,
+                    gate,
+                    down,
+                    cfg.hidden_dim,
+                    cfg.intermediate_dim,
+                );
+            }
+            GpuFFNType::GELU => {
+                self.matvec_batch(
+                    &layer.w_gate,
+                    input,
+                    gate,
+                    cfg.intermediate_dim,
+                    cfg.hidden_dim,
+                );
+                self.backend.gelu_inplace(gate);
+                self.matvec_batch(
+                    &layer.w_down,
+                    gate,
+                    down,
+                    cfg.hidden_dim,
+                    cfg.intermediate_dim,
+                );
+            }
+        }
+
+        debug_assert_eq!(input.len / cfg.hidden_dim, batch_size);
+    }
+
     /// Dispatch FFN based on config.ffn_type.
     fn compute_ffn(
         &self,
@@ -585,36 +997,58 @@ impl<R: Runtime> GpuInference<R> {
         match cfg.ffn_type {
             GpuFFNType::SwiGLU => {
                 self.backend.matvec(
-                    &layer.w_gate, input, gate, cfg.intermediate_dim, cfg.hidden_dim,
+                    &layer.w_gate,
+                    input,
+                    gate,
+                    cfg.intermediate_dim,
+                    cfg.hidden_dim,
                 );
-                self.backend.matvec(
-                    &layer.w_up, input, up, cfg.intermediate_dim, cfg.hidden_dim,
-                );
+                self.backend
+                    .matvec(&layer.w_up, input, up, cfg.intermediate_dim, cfg.hidden_dim);
                 self.backend.fused_swiglu(gate, up);
                 self.backend.matvec(
-                    &layer.w_down, gate, down, cfg.hidden_dim, cfg.intermediate_dim,
+                    &layer.w_down,
+                    gate,
+                    down,
+                    cfg.hidden_dim,
+                    cfg.intermediate_dim,
                 );
             }
             GpuFFNType::GeGLU => {
                 self.backend.matvec(
-                    &layer.w_gate, input, gate, cfg.intermediate_dim, cfg.hidden_dim,
+                    &layer.w_gate,
+                    input,
+                    gate,
+                    cfg.intermediate_dim,
+                    cfg.hidden_dim,
                 );
-                self.backend.matvec(
-                    &layer.w_up, input, up, cfg.intermediate_dim, cfg.hidden_dim,
-                );
+                self.backend
+                    .matvec(&layer.w_up, input, up, cfg.intermediate_dim, cfg.hidden_dim);
                 self.backend.fused_geglu(gate, up);
                 self.backend.matvec(
-                    &layer.w_down, gate, down, cfg.hidden_dim, cfg.intermediate_dim,
+                    &layer.w_down,
+                    gate,
+                    down,
+                    cfg.hidden_dim,
+                    cfg.intermediate_dim,
                 );
             }
             GpuFFNType::GELU => {
                 // Plain GELU FFN: only 2 matrices (gate=fc1, down=fc2), no up projection.
                 self.backend.matvec(
-                    &layer.w_gate, input, gate, cfg.intermediate_dim, cfg.hidden_dim,
+                    &layer.w_gate,
+                    input,
+                    gate,
+                    cfg.intermediate_dim,
+                    cfg.hidden_dim,
                 );
                 self.backend.gelu_inplace(gate);
                 self.backend.matvec(
-                    &layer.w_down, gate, down, cfg.hidden_dim, cfg.intermediate_dim,
+                    &layer.w_down,
+                    gate,
+                    down,
+                    cfg.hidden_dim,
+                    cfg.intermediate_dim,
                 );
             }
         }
@@ -623,6 +1057,163 @@ impl<R: Runtime> GpuInference<R> {
     // -----------------------------------------------------------------------
     // Main forward pass
     // -----------------------------------------------------------------------
+
+    /// Run a full prompt prefill on GPU.
+    ///
+    /// Processes all prompt tokens in one batched pass: embeddings, batched
+    /// block execution, and causal prompt attention. Returns logits for the
+    /// final token, matching the CPU `forward_batch` contract.
+    pub fn forward_batch(&self, cache: &mut [GpuLayerCache], token_ids: &[u32]) -> Vec<f32> {
+        let cfg = &self.config;
+        let batch_size = token_ids.len();
+        if batch_size == 0 {
+            return vec![0.0f32; cfg.vocab_size];
+        }
+        if batch_size == 1 {
+            return self.forward_token(cache, token_ids[0]);
+        }
+
+        let hidden_dim = cfg.hidden_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+        let start_position = cache.first().map(|c| c.len).unwrap_or(0);
+        let seq_len = start_position + batch_size;
+
+        let token_ids_buf = self.backend.from_u32(token_ids);
+        let mut hidden = self.backend.zeros(batch_size * hidden_dim);
+        self.lookup_embedding_batch(
+            &self.weights.token_embedding,
+            &token_ids_buf,
+            &mut hidden,
+            hidden_dim,
+        );
+
+        if matches!(&cfg.pos_encoding, GpuPosEncoding::Learned) {
+            if let Some(pos_emb) = &self.weights.position_embedding {
+                let positions: Vec<u32> = (0..batch_size)
+                    .map(|i| (start_position + i) as u32)
+                    .collect();
+                let positions_buf = self.backend.from_u32(&positions);
+                self.add_embedding_batch(pos_emb, &positions_buf, &mut hidden, hidden_dim);
+            }
+        }
+
+        if let Some(scale) = cfg.embedding_scale {
+            self.scale_inplace(&mut hidden, scale);
+        }
+
+        let mut normed = self.backend.zeros(batch_size * hidden_dim);
+        let mut saved_normed = matches!(cfg.block_style, GpuBlockStyle::Parallel)
+            .then(|| self.backend.zeros(batch_size * hidden_dim));
+        let mut q = self.backend.zeros(batch_size * q_dim);
+        let mut k = self.backend.zeros(batch_size * kv_dim);
+        let mut v = self.backend.zeros(batch_size * kv_dim);
+        let mut attn_output = self.backend.zeros(batch_size * q_dim);
+        let mut proj_out = self.backend.zeros(batch_size * hidden_dim);
+        let mut gate = self.backend.zeros(batch_size * cfg.intermediate_dim);
+        let mut up = self.backend.zeros(batch_size * cfg.intermediate_dim);
+        let mut down = self.backend.zeros(batch_size * hidden_dim);
+        let mut scores = self.backend.zeros(batch_size * seq_len);
+
+        for layer_idx in 0..cfg.num_layers {
+            let layer = &self.weights.layers[layer_idx];
+            let layer_cache = &mut cache[layer_idx];
+
+            self.norm_hidden(
+                &hidden,
+                &layer.attn_norm,
+                layer.attn_norm_bias.as_ref(),
+                &mut normed,
+            );
+
+            self.project_qkv_batch(layer, &normed, batch_size, &mut q, &mut k, &mut v);
+            self.apply_rope_batch(&mut q, &mut k, start_position, batch_size);
+
+            match cfg.block_style {
+                GpuBlockStyle::Sequential => {
+                    self.run_attention_batch(
+                        layer,
+                        layer_cache,
+                        start_position,
+                        batch_size,
+                        &q,
+                        &mut k,
+                        &mut v,
+                        &mut attn_output,
+                        &mut scores,
+                    );
+                    self.project_attention_output_batch(layer, &attn_output, &mut proj_out);
+                    self.backend.add_inplace(&mut hidden, &proj_out);
+
+                    self.norm_hidden(
+                        &hidden,
+                        &layer.ffn_norm,
+                        layer.ffn_norm_bias.as_ref(),
+                        &mut normed,
+                    );
+                    self.compute_ffn_batch(
+                        layer, &normed, batch_size, &mut gate, &mut up, &mut down,
+                    );
+                    self.backend.add_inplace(&mut hidden, &down);
+                }
+                GpuBlockStyle::Parallel => {
+                    let saved = saved_normed
+                        .as_mut()
+                        .expect("parallel block requires saved normed buffer");
+                    self.copy_slice(&normed, 0, saved, 0, normed.len);
+
+                    self.run_attention_batch(
+                        layer,
+                        layer_cache,
+                        start_position,
+                        batch_size,
+                        &q,
+                        &mut k,
+                        &mut v,
+                        &mut attn_output,
+                        &mut scores,
+                    );
+                    self.compute_ffn_batch(layer, saved, batch_size, &mut gate, &mut up, &mut down);
+
+                    self.project_attention_output_batch(layer, &attn_output, &mut proj_out);
+                    self.backend.add_inplace(&mut hidden, &proj_out);
+                    self.backend.add_inplace(&mut hidden, &down);
+                }
+            }
+        }
+
+        self.norm_hidden(
+            &hidden,
+            &self.weights.final_norm,
+            self.weights.final_norm_bias.as_ref(),
+            &mut normed,
+        );
+
+        let mut last_hidden = self.backend.zeros(hidden_dim);
+        self.copy_slice(
+            &normed,
+            normed.len - hidden_dim,
+            &mut last_hidden,
+            0,
+            hidden_dim,
+        );
+
+        let mut logits = self.backend.zeros(cfg.vocab_size);
+        self.backend.matvec(
+            &self.weights.lm_head,
+            &last_hidden,
+            &mut logits,
+            cfg.vocab_size,
+            hidden_dim,
+        );
+
+        // Keep the cache lengths in sync with the number of prefetched tokens.
+        for layer_cache in cache.iter_mut() {
+            layer_cache.len = seq_len;
+        }
+
+        self.backend.to_f32(&logits)
+    }
 
     /// Run a full decode step for a single token on GPU.
     ///
@@ -638,7 +1229,12 @@ impl<R: Runtime> GpuInference<R> {
 
         // 1. Embedding lookup
         let mut hidden = self.backend.zeros(hidden_dim);
-        self.lookup_embedding_row(&self.weights.token_embedding, token_id, hidden_dim, &mut hidden);
+        self.lookup_embedding_row(
+            &self.weights.token_embedding,
+            token_id,
+            hidden_dim,
+            &mut hidden,
+        );
 
         // 1b. Learned position embedding (GPT-2)
         if matches!(&cfg.pos_encoding, GpuPosEncoding::Learned) {
@@ -676,32 +1272,57 @@ impl<R: Runtime> GpuInference<R> {
             let position = layer_cache.len;
 
             // Pre-attention norm
-            self.norm_hidden(&hidden, &layer.attn_norm, layer.attn_norm_bias.as_ref(), &mut normed);
+            self.norm_hidden(
+                &hidden,
+                &layer.attn_norm,
+                layer.attn_norm_bias.as_ref(),
+                &mut normed,
+            );
 
             match cfg.block_style {
                 GpuBlockStyle::Sequential => {
                     // Attention → residual → FFN norm → FFN → residual
                     self.run_attention(
-                        layer, layer_cache, position, &normed,
-                        &mut q, &mut k, &mut v, &mut attn_output, &mut head_out, &mut proj_out,
+                        layer,
+                        layer_cache,
+                        position,
+                        &normed,
+                        &mut q,
+                        &mut k,
+                        &mut v,
+                        &mut attn_output,
+                        &mut head_out,
+                        &mut proj_out,
                     );
                     self.backend.add_inplace(&mut hidden, &proj_out);
 
                     self.norm_hidden(
-                        &hidden, &layer.ffn_norm, layer.ffn_norm_bias.as_ref(), &mut normed,
+                        &hidden,
+                        &layer.ffn_norm,
+                        layer.ffn_norm_bias.as_ref(),
+                        &mut normed,
                     );
                     self.compute_ffn(layer, &normed, &mut gate, &mut up, &mut down);
                     self.backend.add_inplace(&mut hidden, &down);
                 }
                 GpuBlockStyle::Parallel => {
                     // Save normed for FFN, run attention and FFN from same input
-                    let saved = parallel_normed.as_mut()
+                    let saved = parallel_normed
+                        .as_mut()
                         .expect("parallel block requires saved normed buffer");
                     self.copy_slice(&normed, 0, saved, 0, hidden_dim);
 
                     self.run_attention(
-                        layer, layer_cache, position, &normed,
-                        &mut q, &mut k, &mut v, &mut attn_output, &mut head_out, &mut proj_out,
+                        layer,
+                        layer_cache,
+                        position,
+                        &normed,
+                        &mut q,
+                        &mut k,
+                        &mut v,
+                        &mut attn_output,
+                        &mut head_out,
+                        &mut proj_out,
                     );
                     self.compute_ffn(layer, saved, &mut gate, &mut up, &mut down);
 
@@ -713,11 +1334,20 @@ impl<R: Runtime> GpuInference<R> {
 
         // 3. Final norm + LM head
         self.norm_hidden(
-            &hidden, &self.weights.final_norm, self.weights.final_norm_bias.as_ref(), &mut normed,
+            &hidden,
+            &self.weights.final_norm,
+            self.weights.final_norm_bias.as_ref(),
+            &mut normed,
         );
 
         let mut logits = self.backend.zeros(cfg.vocab_size);
-        self.backend.matvec(&self.weights.lm_head, &normed, &mut logits, cfg.vocab_size, hidden_dim);
+        self.backend.matvec(
+            &self.weights.lm_head,
+            &normed,
+            &mut logits,
+            cfg.vocab_size,
+            hidden_dim,
+        );
 
         self.backend.to_f32(&logits)
     }
@@ -737,9 +1367,7 @@ impl<R: Runtime> GpuInference<R> {
 mod tests {
     use super::*;
     use cubecl::wgpu::WgpuRuntime;
-    use nnx_core::gpu_config::{
-        GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
-    };
+    use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
 
     fn tiny_gpu_config() -> GpuConfig {
         GpuConfig {
@@ -777,8 +1405,12 @@ mod tests {
             w_gate: vec![0.01f32; ffn * hd],
             w_up: vec![0.01f32; ffn * hd],
             w_down: vec![0.01f32; hd * ffn],
-            bq: None, bk: None, bv: None, bo: None,
-            attn_norm_bias: None, ffn_norm_bias: None,
+            bq: None,
+            bk: None,
+            bv: None,
+            bo: None,
+            attn_norm_bias: None,
+            ffn_norm_bias: None,
         }
     }
 
@@ -826,6 +1458,54 @@ mod tests {
             "all logits must be finite"
         );
         assert_eq!(cache[0].len, 1, "cache position must advance to 1");
+    }
+
+    #[test]
+    fn test_forward_batch_matches_sequential_prefill_with_learned_positions() {
+        let mut config = tiny_gpu_config();
+        config.pos_encoding = GpuPosEncoding::Learned;
+        let hd = config.hidden_dim;
+        let vs = config.vocab_size;
+
+        let position_embedding: Vec<f32> = (0..config.max_context_length * hd)
+            .map(|i| ((i % 29) as f32) * 0.001 - 0.014)
+            .collect();
+
+        let gpu = GpuInference::<WgpuRuntime>::from_raw_weights(
+            config,
+            &vec![0.1f32; vs * hd],
+            Some(&position_embedding),
+            &vec![0.01f32; vs * hd],
+            &vec![1.0f32; hd],
+            None,
+            vec![tiny_raw_layer()],
+        )
+        .expect("upload should succeed");
+
+        let tokens = [1u32, 5, 10];
+
+        let mut batch_cache = gpu.new_cache();
+        let batch_logits = gpu.forward_batch(&mut batch_cache, &tokens);
+
+        let mut sequential_cache = gpu.new_cache();
+        let mut sequential_logits = Vec::new();
+        for &token in &tokens {
+            sequential_logits = gpu.forward_token(&mut sequential_cache, token);
+        }
+
+        assert_eq!(batch_logits.len(), vs);
+        assert!(batch_logits.iter().all(|v| v.is_finite()));
+        assert_eq!(batch_cache[0].len, tokens.len());
+
+        let max_diff = batch_logits
+            .iter()
+            .zip(sequential_logits.iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff < 1e-1,
+            "batched prefill differs from sequential decode by {max_diff}"
+        );
     }
 
     #[test]
