@@ -115,8 +115,14 @@ impl Sequence {
             .len()
             .saturating_sub(self.prefilled_tokens);
         if remaining == 0 {
-            // Entire prompt was satisfied by prefix cache — skip prefill.
-            self.state = SequenceState::Decoding;
+            self.state = if self.should_stop() {
+                SequenceState::Finished {
+                    reason: FinishReason::MaxTokens,
+                }
+            } else {
+                // Entire prompt was satisfied by prefix cache — skip prefill.
+                SequenceState::Decoding
+            };
         } else {
             self.state = SequenceState::Prefilling {
                 tokens_remaining: remaining,
@@ -132,7 +138,13 @@ impl Sequence {
             .len()
             .saturating_sub(self.prefilled_tokens);
         if remaining == 0 {
-            self.state = SequenceState::Decoding;
+            self.state = if self.should_stop() {
+                SequenceState::Finished {
+                    reason: FinishReason::MaxTokens,
+                }
+            } else {
+                SequenceState::Decoding
+            };
         } else {
             self.state = SequenceState::Prefilling {
                 tokens_remaining: remaining,

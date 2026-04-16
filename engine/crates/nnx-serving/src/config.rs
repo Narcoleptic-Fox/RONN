@@ -1,5 +1,23 @@
 //! Serving configuration.
 
+/// GPU KV-cache quantization settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KvCacheQuantizationConfig {
+    /// Enable paged GPU KV quantization.
+    pub enabled: bool,
+    /// Residual sketch width used for key-score correction.
+    pub residual_sketch_dim: usize,
+}
+
+impl Default for KvCacheQuantizationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            residual_sketch_dim: 16,
+        }
+    }
+}
+
 /// Configuration for the serving infrastructure.
 #[derive(Debug, Clone)]
 pub struct ServingConfig {
@@ -30,6 +48,9 @@ pub struct ServingConfig {
     /// Maximum number of tokens to prefill in a single iteration (chunked prefill).
     /// 0 = unlimited (prefill entire prompt at once).
     pub max_prefill_tokens: usize,
+
+    /// Optional GPU KV-cache quantization.
+    pub gpu_kv_quantization: KvCacheQuantizationConfig,
 }
 
 impl Default for ServingConfig {
@@ -42,6 +63,7 @@ impl Default for ServingConfig {
             enable_prefix_caching: true,
             max_prefix_cache_entries: 1024,
             max_prefill_tokens: 0,
+            gpu_kv_quantization: KvCacheQuantizationConfig::default(),
         }
     }
 }
@@ -63,6 +85,12 @@ impl ServingConfig {
         }
         if self.max_batch_size == 0 {
             return Err("max_batch_size must be > 0".into());
+        }
+        if self.gpu_kv_quantization.enabled && self.gpu_kv_quantization.residual_sketch_dim != 16 {
+            return Err(
+                "gpu_kv_quantization.residual_sketch_dim must be 16 for the current GPU KV quantization path"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -98,5 +126,13 @@ mod tests {
             cfg.page_size = size;
             cfg.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn rejects_zero_residual_sketch_dim_when_quantization_enabled() {
+        let mut cfg = ServingConfig::default();
+        cfg.gpu_kv_quantization.enabled = true;
+        cfg.gpu_kv_quantization.residual_sketch_dim = 0;
+        assert!(cfg.validate().is_err());
     }
 }

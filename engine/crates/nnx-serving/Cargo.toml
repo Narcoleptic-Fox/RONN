@@ -9,6 +9,7 @@ description = "Serving infrastructure for NNX: paged attention, continuous batch
 [dependencies]
 nnx-core = { path = "../nnx-core" }
 nnx-kernels = { path = "../nnx-kernels" }
+nnx-cubecl = { path = "../nnx-cubecl", optional = true }
 nnx-transformer = { path = "../nnx-transformer" }
 rayon.workspace = true
 thiserror.workspace = true
@@ -18,6 +19,10 @@ tracing.workspace = true
 proptest.workspace = true
 nnx-transformer = { path = "../nnx-transformer" }
 nnx-quant = { path = "../nnx-quant" }
+
+[features]
+default = []
+gpu = ["nnx-transformer/gpu", "nnx-cubecl"]
 
 [lints]
 workspace = true

@@ -14,7 +14,7 @@
 #![cfg(feature = "wgpu")]
 
 use cubecl::wgpu::WgpuRuntime;
-use nnx_core::gpu_config::{GpuConfig, GpuPosEncoding};
+use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
 use nnx_cubecl::inference::{GpuInference, RawLayerWeights};
 
 // ---------------------------------------------------------------------------
@@ -40,6 +40,11 @@ fn test_config() -> GpuConfig {
         pos_encoding: GpuPosEncoding::RoPE { freq_base: 10000.0 },
         rms_norm_eps: 1e-5,
         embedding_scale: None,
+        norm_type: GpuNormType::RMSNorm,
+        ffn_type: GpuFFNType::SwiGLU,
+        block_style: GpuBlockStyle::Sequential,
+        has_qkv_bias: false,
+        has_output_bias: false,
     }
 }
 
@@ -174,26 +179,32 @@ fn gpu_cache_advances_position() {
 }
 
 #[test]
-fn gpu_sequential_logits_differ() {
-    // Verify that the KV cache is actually being used: successive tokens at
-    // different positions should produce different logits.
+fn gpu_context_changes_logits() {
+    // Verify that cached context influences decode results. Repeating the same
+    // token at positions 0 and 1 can be nearly invariant for this tiny synthetic
+    // model, so compare the same decode token with and without a nontrivial prefix.
     let gpu = make_test_engine();
-    let mut cache = gpu.new_cache();
+    let logits_without_prefix = {
+        let mut cache = gpu.new_cache();
+        gpu.forward_token(&mut cache, 7u32)
+    };
+    let logits_with_prefix = {
+        let mut cache = gpu.new_cache();
+        for &token in &[1u32, 5, 10] {
+            gpu.forward_token(&mut cache, token);
+        }
+        gpu.forward_token(&mut cache, 7u32)
+    };
 
-    let logits_t0 = gpu.forward_token(&mut cache, 1u32);
-    let logits_t1 = gpu.forward_token(&mut cache, 1u32);
-
-    // Same token at different positions must produce different logits because
-    // the KV cache context changes.
-    let max_diff = logits_t0
+    let max_diff = logits_without_prefix
         .iter()
-        .zip(logits_t1.iter())
+        .zip(logits_with_prefix.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
 
     assert!(
         max_diff > 1e-6,
-        "logits for token at position 0 and position 1 should differ (max_diff={max_diff})"
+        "logits should differ when decode context changes (max_diff={max_diff})"
     );
 }
 

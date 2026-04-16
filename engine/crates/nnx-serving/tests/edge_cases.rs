@@ -4,13 +4,15 @@
 //! and resource lifecycle correctness that are hard to hit with
 //! happy-path integration tests.
 
+#[cfg(feature = "gpu")]
+use nnx_core::device::Device;
 use nnx_core::engine::KVStore;
 use nnx_serving::backend::ServingEngine;
 use nnx_serving::block_manager::BlockAllocator;
 use nnx_serving::config::ServingConfig;
 use nnx_serving::page::PageId;
 use nnx_serving::paged_cache::{PagedLayerView, SequencePageTable};
-use nnx_serving::prefix_cache::{PageHash, PrefixCache, compute_hash_chain};
+use nnx_serving::prefix_cache::{compute_hash_chain, PageHash, PrefixCache};
 use nnx_serving::scheduler::Scheduler;
 use nnx_serving::sequence::{FinishReason, Sequence, SequenceId, SequenceState};
 use nnx_transformer::block::BlockWeights;
@@ -135,6 +137,7 @@ fn serving_config(
         enable_prefix_caching: prefix_cache,
         max_prefix_cache_entries: 4,
         max_prefill_tokens: 0,
+        gpu_kv_quantization: Default::default(),
     }
 }
 
@@ -165,6 +168,200 @@ fn drive_to_completion(
         finished.extend(out.finished);
     }
     finished
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_serving_prefix_cache_matches_uncached_logits() {
+    let prompt = vec![1, 2, 3, 4, 5];
+
+    let mut uncached = ServingEngine::new_with_device(
+        tiny_model(2),
+        serving_config(4, 64, 4, false),
+        Device::Gpu(0),
+    )
+    .unwrap();
+    let uncached_id = uncached.add_request(prompt.clone(), 1);
+    let uncached_out = uncached.step().unwrap();
+    let uncached_logits = uncached_out
+        .outputs
+        .iter()
+        .find(|out| out.seq_id == uncached_id)
+        .unwrap()
+        .logits
+        .clone();
+
+    let mut cached = ServingEngine::new_with_device(
+        tiny_model(2),
+        serving_config(4, 64, 4, true),
+        Device::Gpu(0),
+    )
+    .unwrap();
+
+    let warm_id = cached.add_request(prompt.clone(), 1);
+    cached.step().unwrap();
+    cached.on_token_generated(warm_id, 10, false);
+    cached.step().unwrap();
+
+    let pages_before_hit = cached.allocator_stats().used_pages;
+    let cached_id = cached.add_request(prompt.clone(), 1);
+    let pages_after_hit = cached.allocator_stats().used_pages;
+    assert_eq!(
+        pages_after_hit, pages_before_hit,
+        "prefix cache hit should share existing GPU pages instead of allocating new ones"
+    );
+
+    let cached_out = cached.step().unwrap();
+    let cached_logits = cached_out
+        .outputs
+        .iter()
+        .find(|out| out.seq_id == cached_id)
+        .unwrap()
+        .logits
+        .clone();
+
+    assert_eq!(uncached_logits.len(), cached_logits.len());
+    for (idx, (lhs, rhs)) in uncached_logits.iter().zip(cached_logits.iter()).enumerate() {
+        assert!(
+            (lhs - rhs).abs() < 1e-5,
+            "GPU prefix-cache logit mismatch at {idx}: uncached={lhs}, cached={rhs}"
+        );
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_serving_page_aligned_full_prefix_hit_recomputes_last_page() {
+    let prompt = vec![1, 2, 3, 4, 5, 6, 7, 8];
+
+    let mut uncached = ServingEngine::new_with_device(
+        tiny_model(2),
+        serving_config(4, 64, 4, false),
+        Device::Gpu(0),
+    )
+    .unwrap();
+    let uncached_id = uncached.add_request(prompt.clone(), 1);
+    let uncached_logits = uncached
+        .step()
+        .unwrap()
+        .outputs
+        .into_iter()
+        .find(|out| out.seq_id == uncached_id)
+        .unwrap()
+        .logits;
+
+    let mut cached = ServingEngine::new_with_device(
+        tiny_model(2),
+        serving_config(4, 64, 4, true),
+        Device::Gpu(0),
+    )
+    .unwrap();
+
+    let warm_id = cached.add_request(prompt.clone(), 1);
+    cached.step().unwrap();
+    cached.on_token_generated(warm_id, 10, false);
+    cached.step().unwrap();
+
+    let cached_id = cached.add_request(prompt.clone(), 1);
+    let cached_logits = cached
+        .step()
+        .unwrap()
+        .outputs
+        .into_iter()
+        .find(|out| out.seq_id == cached_id)
+        .unwrap()
+        .logits;
+
+    assert_eq!(uncached_logits.len(), cached_logits.len());
+    for (idx, (lhs, rhs)) in uncached_logits.iter().zip(cached_logits.iter()).enumerate() {
+        assert!(
+            (lhs - rhs).abs() < 1e-5,
+            "GPU full-hit prefix cache mismatch at {idx}: uncached={lhs}, cached={rhs}"
+        );
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn gpu_serving_quantized_kv_matches_dense_decode() {
+    let prompt = vec![1, 2, 3, 4, 5];
+
+    let mut dense = ServingEngine::new_with_device(
+        tiny_model(2),
+        serving_config(4, 64, 4, false),
+        Device::Gpu(0),
+    )
+    .unwrap();
+
+    let mut quantized_cfg = serving_config(4, 64, 4, false);
+    quantized_cfg.gpu_kv_quantization.enabled = true;
+    let mut quantized =
+        ServingEngine::new_with_device(tiny_model(2), quantized_cfg, Device::Gpu(0)).unwrap();
+
+    let dense_id = dense.add_request(prompt.clone(), 2);
+    let quantized_id = quantized.add_request(prompt.clone(), 2);
+
+    let dense_prefill = dense.step().unwrap();
+    let quantized_prefill = quantized.step().unwrap();
+
+    let dense_prefill_logits = dense_prefill
+        .outputs
+        .iter()
+        .find(|out| out.seq_id == dense_id)
+        .unwrap()
+        .logits
+        .clone();
+    let quantized_prefill_logits = quantized_prefill
+        .outputs
+        .iter()
+        .find(|out| out.seq_id == quantized_id)
+        .unwrap()
+        .logits
+        .clone();
+
+    for (idx, (lhs, rhs)) in dense_prefill_logits
+        .iter()
+        .zip(quantized_prefill_logits.iter())
+        .enumerate()
+    {
+        assert!(
+            (lhs - rhs).abs() < 1e-5,
+            "GPU quantized prefill mismatch at {idx}: dense={lhs}, quantized={rhs}"
+        );
+    }
+
+    dense.on_token_generated(dense_id, 7, false);
+    quantized.on_token_generated(quantized_id, 7, false);
+
+    let dense_decode_logits = dense
+        .step()
+        .unwrap()
+        .outputs
+        .into_iter()
+        .find(|out| out.seq_id == dense_id)
+        .unwrap()
+        .logits;
+    let quantized_decode_logits = quantized
+        .step()
+        .unwrap()
+        .outputs
+        .into_iter()
+        .find(|out| out.seq_id == quantized_id)
+        .unwrap()
+        .logits;
+
+    assert_eq!(argmax(&dense_decode_logits), argmax(&quantized_decode_logits));
+
+    for (idx, (lhs, rhs)) in dense_decode_logits
+        .iter()
+        .zip(quantized_decode_logits.iter())
+        .enumerate()
+    {
+        assert!(
+            (lhs - rhs).abs() < 5e-2,
+            "GPU quantized decode mismatch at {idx}: dense={lhs}, quantized={rhs}"
+        );
+    }
 }
 
 // ===================================================================
@@ -338,7 +535,12 @@ fn sequence_max_new_tokens_zero() {
     let mut seq = Sequence::new(SequenceId(1), vec![1, 2], 0, 2, 4);
     seq.start_prefill();
     seq.advance_prefill(2);
-    assert_eq!(seq.state, SequenceState::Decoding);
+    assert_eq!(
+        seq.state,
+        SequenceState::Finished {
+            reason: FinishReason::MaxTokens
+        }
+    );
     assert!(seq.should_stop()); // max_new_tokens=0 → stop immediately
 }
 
@@ -367,7 +569,7 @@ fn scheduler_cancel_during_prefill() {
 
     let id = sched.add_request(vec![1, 2, 3, 4, 5, 6, 7, 8], 5);
     sched.step(&alloc); // admit, start prefill
-    // Partially prefill.
+                        // Partially prefill.
     sched.on_prefill_advanced(id, 4);
 
     // Cancel during prefill.
@@ -751,6 +953,25 @@ fn engine_interleaved_prefill_and_decode() {
             s.seq_id,
         );
     }
+}
+
+#[test]
+fn engine_zero_generation_budget_finishes_after_prefill() {
+    let model = tiny_model(2);
+    let config = serving_config(4, 256, 4, false);
+    let mut engine = ServingEngine::new(model, config).unwrap();
+
+    let id = engine.add_request(vec![1, 2, 3], 0);
+
+    let first = engine.step().unwrap();
+    assert_eq!(first.outputs.len(), 1);
+    assert_eq!(first.outputs[0].seq_id, id);
+
+    let second = engine.step().unwrap();
+    assert!(second.outputs.is_empty(), "zero-budget request must not decode");
+    assert_eq!(second.finished.len(), 1);
+    assert_eq!(second.finished[0].0, id);
+    assert_eq!(second.finished[0].1, FinishReason::MaxTokens);
 }
 
 #[test]

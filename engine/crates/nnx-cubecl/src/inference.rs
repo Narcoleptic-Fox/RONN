@@ -25,8 +25,15 @@
 use cubecl::prelude::*;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
+use crate::paged_kv::{
+    contiguous_to_paged_page_kernel, paged_attention_contract_kernel,
+    paged_attention_scores_kernel, paged_cache_append_kernel, paged_quantize_page_kernel,
+    paged_to_contiguous_page_kernel, GpuPagePool,
+    GpuPagedKvQuantConfig,
+};
 use nnx_core::backend::KernelBackend;
 use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
+use nnx_core::PageId;
 
 // ---------------------------------------------------------------------------
 // GPU weight storage
@@ -256,6 +263,198 @@ impl<R: Runtime> GpuInference<R> {
         &self.config
     }
 
+    /// Allocate a GPU page pool with the model's KV geometry.
+    pub fn new_page_pool(
+        &self,
+        num_pages: usize,
+        page_size: usize,
+        quant_config: Option<GpuPagedKvQuantConfig>,
+    ) -> GpuPagePool {
+        GpuPagePool::new_with_quantization(
+            num_pages,
+            page_size,
+            self.config.num_kv_heads,
+            self.config.head_dim,
+            quant_config,
+            &self.backend,
+        )
+    }
+
+    pub fn quantize_completed_pages(
+        &self,
+        pool: &mut GpuPagePool,
+        page_tables: &[&[PageId]],
+        total_tokens: usize,
+    ) {
+        let Some(quantized) = pool.quantized() else {
+            return;
+        };
+        let quant_payload = quantized.quant_payload().clone();
+        let full_pages = total_tokens / pool.page_size();
+        let kv_dim = pool.kv_dim();
+        let head_dim = pool.head_dim();
+        let num_kv_heads = pool.num_kv_heads();
+        let page_size = pool.page_size();
+        let words_per_token = kv_dim.div_ceil(4);
+        let residual_words_per_token = quantized.config().residual_words_per_token();
+        let payload_words_per_page = 2 * page_size * words_per_token
+            + page_size * num_kv_heads * residual_words_per_token;
+
+        for page_table in page_tables {
+            for page_idx in 0..full_pages {
+                let Some(&page_id) = page_table.get(page_idx) else {
+                    break;
+                };
+                if pool.is_page_quantized(page_id) {
+                    continue;
+                }
+
+                let page = pool.page(page_id);
+                let payload_base = page_id.0 as usize * payload_words_per_page;
+
+                unsafe {
+                    paged_quantize_page_kernel::launch::<R>(
+                        self.backend.client(),
+                        CubeCount::Static(1, 1, 1),
+                        CubeDim::new(1, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(
+                            &pool.flat_buffer().handle,
+                            pool.flat_buffer().len,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(
+                            &quant_payload.handle,
+                            quant_payload.len,
+                            1,
+                        ),
+                        ScalarArg::new(page.base_offset() as u32),
+                        ScalarArg::new(payload_base as u32),
+                        ScalarArg::new(page_size as u32),
+                        ScalarArg::new(kv_dim as u32),
+                        ScalarArg::new(head_dim as u32),
+                    );
+                }
+
+                pool.set_page_quantized(page_id);
+            }
+        }
+    }
+
+    pub fn mark_pages_dense(&self, pool: &mut GpuPagePool, page_ids: &[PageId]) {
+        for &page_id in page_ids {
+            pool.set_page_dense(page_id);
+        }
+    }
+
+    /// Mirror one full logical page from a contiguous cache into paged GPU storage.
+    pub fn copy_cache_page_to_pool(
+        &self,
+        layer_cache: &GpuLayerCache,
+        src_page_idx: usize,
+        page_size: usize,
+        pool: &GpuPagePool,
+        dst_page_id: PageId,
+    ) {
+        assert_eq!(
+            pool.kv_dim(),
+            self.config.num_kv_heads * self.config.head_dim,
+            "GpuPagePool geometry must match the model KV geometry"
+        );
+        assert_eq!(
+            pool.page_size(),
+            page_size,
+            "GpuPagePool page size must match ServingEngine page size"
+        );
+
+        let src_token_offset = src_page_idx * page_size;
+        assert!(
+            src_token_offset + page_size <= layer_cache.len,
+            "cannot mirror incomplete cache page {} (cache len {}, page_size {})",
+            src_page_idx,
+            layer_cache.len,
+            page_size
+        );
+
+        let page = pool.page(dst_page_id);
+        unsafe {
+            contiguous_to_paged_page_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&layer_cache.keys.handle, layer_cache.keys.len, 1),
+                ArrayArg::from_raw_parts::<f32>(
+                    &layer_cache.values.handle,
+                    layer_cache.values.len,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<f32>(
+                    &pool.flat_buffer().handle,
+                    pool.flat_buffer().len,
+                    1,
+                ),
+                ScalarArg::new(page.base_offset() as u32),
+                ScalarArg::new(src_token_offset as u32),
+                ScalarArg::new(page_size as u32),
+                ScalarArg::new(pool.kv_dim() as u32),
+            );
+        }
+    }
+
+    /// Hydrate one full logical page from paged GPU storage into a contiguous cache.
+    pub fn copy_pool_page_to_cache(
+        &self,
+        pool: &GpuPagePool,
+        src_page_id: PageId,
+        layer_cache: &mut GpuLayerCache,
+        dst_page_idx: usize,
+        page_size: usize,
+    ) {
+        assert_eq!(
+            pool.kv_dim(),
+            self.config.num_kv_heads * self.config.head_dim,
+            "GpuPagePool geometry must match the model KV geometry"
+        );
+        assert_eq!(
+            pool.page_size(),
+            page_size,
+            "GpuPagePool page size must match ServingEngine page size"
+        );
+
+        let dst_token_offset = dst_page_idx * page_size;
+        let capacity = layer_cache.keys.len / pool.kv_dim();
+        assert!(
+            dst_token_offset + page_size <= capacity,
+            "cannot hydrate page {} into cache capacity {} with page_size {}",
+            dst_page_idx,
+            capacity,
+            page_size
+        );
+
+        let page = pool.page(src_page_id);
+        unsafe {
+            paged_to_contiguous_page_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(
+                    &pool.flat_buffer().handle,
+                    pool.flat_buffer().len,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<f32>(&layer_cache.keys.handle, layer_cache.keys.len, 1),
+                ArrayArg::from_raw_parts::<f32>(
+                    &layer_cache.values.handle,
+                    layer_cache.values.len,
+                    1,
+                ),
+                ScalarArg::new(page.base_offset() as u32),
+                ScalarArg::new(dst_token_offset as u32),
+                ScalarArg::new(page_size as u32),
+                ScalarArg::new(pool.kv_dim() as u32),
+            );
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Forward pass helpers — architecture-dispatched
     // -----------------------------------------------------------------------
@@ -445,6 +644,48 @@ impl<R: Runtime> GpuInference<R> {
                 ScalarArg::new(kv_dim as u32),
             );
         }
+    }
+
+    fn append_paged_cache_value(
+        &self,
+        data: &GpuBuffer,
+        pool: &GpuPagePool,
+        page_id: PageId,
+        offset_in_page: usize,
+        value_offset: usize,
+    ) {
+        let page = pool.page(page_id);
+        unsafe {
+            paged_cache_append_kernel::launch::<R>(
+                self.backend.client(),
+                CubeCount::Static(1, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&data.handle, data.len, 1),
+                ArrayArg::from_raw_parts::<f32>(
+                    &pool.flat_buffer().handle,
+                    pool.flat_buffer().len,
+                    1,
+                ),
+                ScalarArg::new(page.base_offset() as u32),
+                ScalarArg::new(offset_in_page as u32),
+                ScalarArg::new(pool.kv_dim() as u32),
+                ScalarArg::new(value_offset as u32),
+            );
+        }
+    }
+
+    fn upload_page_table(&self, pool: &GpuPagePool, page_table: &[PageId]) -> GpuBuffer {
+        let page_ids: Vec<u32> = page_table
+            .iter()
+            .map(|page_id| {
+                let mut encoded = page_id.0;
+                if pool.is_page_quantized(*page_id) {
+                    encoded |= 0x8000_0000;
+                }
+                encoded
+            })
+            .collect();
+        self.backend.from_u32(&page_ids)
     }
 
     /// Dispatch normalization based on config.norm_type.
@@ -690,6 +931,130 @@ impl<R: Runtime> GpuInference<R> {
         self.project_attention_output(layer, attn_output, proj_out);
     }
 
+    fn run_attention_paged(
+        &self,
+        layer: &GpuLayerWeights,
+        pool: &GpuPagePool,
+        page_table: &[PageId],
+        position: usize,
+        attn_input: &GpuBuffer,
+        q: &mut GpuBuffer,
+        k: &mut GpuBuffer,
+        v: &mut GpuBuffer,
+        attn_output: &mut GpuBuffer,
+        head_out: &mut GpuBuffer,
+        proj_out: &mut GpuBuffer,
+    ) {
+        let cfg = &self.config;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+        let heads_per_kv = cfg.num_heads / cfg.num_kv_heads;
+        let scale = 1.0f32 / (cfg.head_dim as f32).sqrt();
+        let num_tokens = position + 1;
+        let required_pages = num_tokens.div_ceil(pool.page_size());
+
+        assert!(
+            page_table.len() >= required_pages,
+            "paged attention requires {} logical pages, got {}",
+            required_pages,
+            page_table.len()
+        );
+
+        self.project_qkv(layer, attn_input, q, k, v);
+        self.apply_rope(q, k, position);
+
+        let page_id = page_table[position / pool.page_size()];
+        let offset_in_page = position % pool.page_size();
+        self.append_paged_cache_value(k, pool, page_id, offset_in_page, 0);
+        self.append_paged_cache_value(v, pool, page_id, offset_in_page, kv_dim);
+
+        let page_table_gpu = self.upload_page_table(pool, page_table);
+        let dummy_u32 = self.backend.from_u32(&[0u32]);
+        let mut scores = self.backend.zeros(num_tokens);
+        let quantized = pool.quantized();
+        for h in 0..cfg.num_heads {
+            let kv_head = h / heads_per_kv;
+
+            self.copy_slice(q, h * cfg.head_dim, head_out, 0, cfg.head_dim);
+
+            unsafe {
+                paged_attention_scores_kernel::launch::<R>(
+                    self.backend.client(),
+                    CubeCount::Static(1, 1, 1),
+                    CubeDim::new(1, 1, 1),
+                    ArrayArg::from_raw_parts::<f32>(&head_out.handle, head_out.len, 1),
+                    ArrayArg::from_raw_parts::<f32>(
+                        &pool.flat_buffer().handle,
+                        pool.flat_buffer().len,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<u32>(
+                        &quantized
+                            .map(|storage| storage.quant_payload())
+                            .unwrap_or(&dummy_u32)
+                            .handle,
+                        quantized
+                            .map(|storage| storage.quant_payload().len)
+                            .unwrap_or(dummy_u32.len),
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<u32>(
+                        &page_table_gpu.handle,
+                        page_table_gpu.len,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
+                    ScalarArg::new(pool.page_stride() as u32),
+                    ScalarArg::new(pool.page_size() as u32),
+                    ScalarArg::new(num_tokens as u32),
+                    ScalarArg::new(kv_head as u32),
+                    ScalarArg::new(cfg.head_dim as u32),
+                    ScalarArg::new(scale),
+                );
+            }
+
+            self.backend.softmax_inplace(&mut scores, 0, num_tokens);
+
+            unsafe {
+                paged_attention_contract_kernel::launch::<R>(
+                    self.backend.client(),
+                    CubeCount::Static(1, 1, 1),
+                    CubeDim::new(1, 1, 1),
+                    ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
+                    ArrayArg::from_raw_parts::<f32>(
+                        &pool.flat_buffer().handle,
+                        pool.flat_buffer().len,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<u32>(
+                        &quantized
+                            .map(|storage| storage.quant_payload())
+                            .unwrap_or(&dummy_u32)
+                            .handle,
+                        quantized
+                            .map(|storage| storage.quant_payload().len)
+                            .unwrap_or(dummy_u32.len),
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<u32>(
+                        &page_table_gpu.handle,
+                        page_table_gpu.len,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<f32>(&head_out.handle, head_out.len, 1),
+                    ScalarArg::new(pool.page_stride() as u32),
+                    ScalarArg::new(pool.page_size() as u32),
+                    ScalarArg::new(num_tokens as u32),
+                    ScalarArg::new(kv_head as u32),
+                    ScalarArg::new(cfg.head_dim as u32),
+                );
+            }
+
+            self.copy_slice(head_out, 0, attn_output, h * cfg.head_dim, cfg.head_dim);
+        }
+
+        self.project_attention_output(layer, attn_output, proj_out);
+    }
+
     fn project_qkv_batch(
         &self,
         layer: &GpuLayerWeights,
@@ -915,6 +1280,140 @@ impl<R: Runtime> GpuInference<R> {
         debug_assert_eq!(layer_cache.len, seq_len);
     }
 
+    fn run_attention_batch_paged(
+        &self,
+        layer: &GpuLayerWeights,
+        pool: &GpuPagePool,
+        page_table: &[PageId],
+        start_position: usize,
+        batch_size: usize,
+        q: &GpuBuffer,
+        k: &GpuBuffer,
+        v: &GpuBuffer,
+        attn_output: &mut GpuBuffer,
+        scores: &mut GpuBuffer,
+    ) {
+        let cfg = &self.config;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        let heads_per_kv = cfg.num_heads / cfg.num_kv_heads;
+        let required_pages = (start_position + batch_size).div_ceil(pool.page_size());
+        let page_table_gpu = self.upload_page_table(pool, page_table);
+        let dummy_u32 = self.backend.from_u32(&[0u32]);
+        let scale = 1.0f32 / (cfg.head_dim as f32).sqrt();
+        let quantized = pool.quantized();
+        let mut token_q = self.backend.zeros(cfg.head_dim);
+        let mut token_k = self.backend.zeros(kv_dim);
+        let mut token_v = self.backend.zeros(kv_dim);
+        let head_out = self.backend.zeros(cfg.head_dim);
+
+        assert!(
+            page_table.len() >= required_pages,
+            "paged attention requires {} logical pages, got {}",
+            required_pages,
+            page_table.len()
+        );
+        assert!(
+            scores.len >= start_position + batch_size,
+            "scores scratch buffer too small for paged batch attention"
+        );
+
+        for token_idx in 0..batch_size {
+            let position = start_position + token_idx;
+            let page_id = page_table[position / pool.page_size()];
+            let offset_in_page = position % pool.page_size();
+            let num_tokens = position + 1;
+
+            self.copy_slice(k, token_idx * kv_dim, &mut token_k, 0, kv_dim);
+            self.copy_slice(v, token_idx * kv_dim, &mut token_v, 0, kv_dim);
+            self.append_paged_cache_value(&token_k, pool, page_id, offset_in_page, 0);
+            self.append_paged_cache_value(&token_v, pool, page_id, offset_in_page, kv_dim);
+
+            for h in 0..cfg.num_heads {
+                let kv_head = h / heads_per_kv;
+                let head_offset = h * cfg.head_dim;
+                let q_offset = token_idx * q_dim + head_offset;
+
+                self.copy_slice(q, q_offset, &mut token_q, 0, cfg.head_dim);
+
+                unsafe {
+                    paged_attention_scores_kernel::launch::<R>(
+                        self.backend.client(),
+                        CubeCount::Static(1, 1, 1),
+                        CubeDim::new(1, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(&token_q.handle, token_q.len, 1),
+                        ArrayArg::from_raw_parts::<f32>(
+                            &pool.flat_buffer().handle,
+                            pool.flat_buffer().len,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(
+                            &quantized
+                                .map(|storage| storage.quant_payload())
+                                .unwrap_or(&dummy_u32)
+                                .handle,
+                            quantized
+                                .map(|storage| storage.quant_payload().len)
+                                .unwrap_or(dummy_u32.len),
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(
+                            &page_table_gpu.handle,
+                            page_table_gpu.len,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
+                        ScalarArg::new(pool.page_stride() as u32),
+                        ScalarArg::new(pool.page_size() as u32),
+                        ScalarArg::new(num_tokens as u32),
+                        ScalarArg::new(kv_head as u32),
+                        ScalarArg::new(cfg.head_dim as u32),
+                        ScalarArg::new(scale),
+                    );
+                }
+
+                self.backend.softmax_inplace(scores, 0, num_tokens);
+
+                unsafe {
+                    paged_attention_contract_kernel::launch::<R>(
+                        self.backend.client(),
+                        CubeCount::Static(1, 1, 1),
+                        CubeDim::new(1, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(&scores.handle, scores.len, 1),
+                        ArrayArg::from_raw_parts::<f32>(
+                            &pool.flat_buffer().handle,
+                            pool.flat_buffer().len,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(
+                            &quantized
+                                .map(|storage| storage.quant_payload())
+                                .unwrap_or(&dummy_u32)
+                                .handle,
+                            quantized
+                                .map(|storage| storage.quant_payload().len)
+                                .unwrap_or(dummy_u32.len),
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(
+                            &page_table_gpu.handle,
+                            page_table_gpu.len,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<f32>(&head_out.handle, head_out.len, 1),
+                        ScalarArg::new(pool.page_stride() as u32),
+                        ScalarArg::new(pool.page_size() as u32),
+                        ScalarArg::new(num_tokens as u32),
+                        ScalarArg::new(kv_head as u32),
+                        ScalarArg::new(cfg.head_dim as u32),
+                    );
+                }
+
+                self.copy_slice(&head_out, 0, attn_output, q_offset, cfg.head_dim);
+            }
+        }
+    }
+
     fn compute_ffn_batch(
         &self,
         layer: &GpuLayerWeights,
@@ -1057,6 +1556,167 @@ impl<R: Runtime> GpuInference<R> {
     // -----------------------------------------------------------------------
     // Main forward pass
     // -----------------------------------------------------------------------
+
+    /// Run a prompt prefill directly from paged GPU KV storage.
+    pub fn forward_batch_paged(
+        &self,
+        pool: &GpuPagePool,
+        page_tables: &[&[PageId]],
+        current_tokens: usize,
+        token_ids: &[u32],
+    ) -> Vec<f32> {
+        let cfg = &self.config;
+        let batch_size = token_ids.len();
+        if batch_size == 0 {
+            return vec![0.0f32; cfg.vocab_size];
+        }
+        if batch_size == 1 {
+            return self.forward_token_paged(pool, page_tables, current_tokens, token_ids[0]);
+        }
+
+        assert_eq!(
+            page_tables.len(),
+            cfg.num_layers,
+            "expected one page table per transformer layer"
+        );
+
+        let hidden_dim = cfg.hidden_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+        let start_position = current_tokens;
+        let seq_len = start_position + batch_size;
+
+        let token_ids_buf = self.backend.from_u32(token_ids);
+        let mut hidden = self.backend.zeros(batch_size * hidden_dim);
+        self.lookup_embedding_batch(
+            &self.weights.token_embedding,
+            &token_ids_buf,
+            &mut hidden,
+            hidden_dim,
+        );
+
+        if matches!(&cfg.pos_encoding, GpuPosEncoding::Learned) {
+            if let Some(pos_emb) = &self.weights.position_embedding {
+                let positions: Vec<u32> = (0..batch_size)
+                    .map(|i| (start_position + i) as u32)
+                    .collect();
+                let positions_buf = self.backend.from_u32(&positions);
+                self.add_embedding_batch(pos_emb, &positions_buf, &mut hidden, hidden_dim);
+            }
+        }
+
+        if let Some(scale) = cfg.embedding_scale {
+            self.scale_inplace(&mut hidden, scale);
+        }
+
+        let mut normed = self.backend.zeros(batch_size * hidden_dim);
+        let mut saved_normed = matches!(cfg.block_style, GpuBlockStyle::Parallel)
+            .then(|| self.backend.zeros(batch_size * hidden_dim));
+        let mut q = self.backend.zeros(batch_size * q_dim);
+        let mut k = self.backend.zeros(batch_size * kv_dim);
+        let mut v = self.backend.zeros(batch_size * kv_dim);
+        let mut attn_output = self.backend.zeros(batch_size * q_dim);
+        let mut proj_out = self.backend.zeros(batch_size * hidden_dim);
+        let mut gate = self.backend.zeros(batch_size * cfg.intermediate_dim);
+        let mut up = self.backend.zeros(batch_size * cfg.intermediate_dim);
+        let mut down = self.backend.zeros(batch_size * hidden_dim);
+        let mut scores = self.backend.zeros(seq_len);
+
+        for layer_idx in 0..cfg.num_layers {
+            let layer = &self.weights.layers[layer_idx];
+
+            self.norm_hidden(
+                &hidden,
+                &layer.attn_norm,
+                layer.attn_norm_bias.as_ref(),
+                &mut normed,
+            );
+
+            self.project_qkv_batch(layer, &normed, batch_size, &mut q, &mut k, &mut v);
+            self.apply_rope_batch(&mut q, &mut k, start_position, batch_size);
+
+            match cfg.block_style {
+                GpuBlockStyle::Sequential => {
+                    self.run_attention_batch_paged(
+                        layer,
+                        pool,
+                        page_tables[layer_idx],
+                        start_position,
+                        batch_size,
+                        &q,
+                        &k,
+                        &v,
+                        &mut attn_output,
+                        &mut scores,
+                    );
+                    self.project_attention_output_batch(layer, &attn_output, &mut proj_out);
+                    self.backend.add_inplace(&mut hidden, &proj_out);
+
+                    self.norm_hidden(
+                        &hidden,
+                        &layer.ffn_norm,
+                        layer.ffn_norm_bias.as_ref(),
+                        &mut normed,
+                    );
+                    self.compute_ffn_batch(
+                        layer, &normed, batch_size, &mut gate, &mut up, &mut down,
+                    );
+                    self.backend.add_inplace(&mut hidden, &down);
+                }
+                GpuBlockStyle::Parallel => {
+                    let saved = saved_normed
+                        .as_mut()
+                        .expect("parallel block requires saved normed buffer");
+                    self.copy_slice(&normed, 0, saved, 0, normed.len);
+
+                    self.run_attention_batch_paged(
+                        layer,
+                        pool,
+                        page_tables[layer_idx],
+                        start_position,
+                        batch_size,
+                        &q,
+                        &k,
+                        &v,
+                        &mut attn_output,
+                        &mut scores,
+                    );
+                    self.compute_ffn_batch(layer, saved, batch_size, &mut gate, &mut up, &mut down);
+
+                    self.project_attention_output_batch(layer, &attn_output, &mut proj_out);
+                    self.backend.add_inplace(&mut hidden, &proj_out);
+                    self.backend.add_inplace(&mut hidden, &down);
+                }
+            }
+        }
+
+        self.norm_hidden(
+            &hidden,
+            &self.weights.final_norm,
+            self.weights.final_norm_bias.as_ref(),
+            &mut normed,
+        );
+
+        let mut last_hidden = self.backend.zeros(hidden_dim);
+        self.copy_slice(
+            &normed,
+            normed.len - hidden_dim,
+            &mut last_hidden,
+            0,
+            hidden_dim,
+        );
+
+        let mut logits = self.backend.zeros(cfg.vocab_size);
+        self.backend.matvec(
+            &self.weights.lm_head,
+            &last_hidden,
+            &mut logits,
+            cfg.vocab_size,
+            hidden_dim,
+        );
+
+        self.backend.to_f32(&logits)
+    }
 
     /// Run a full prompt prefill on GPU.
     ///
@@ -1211,6 +1871,140 @@ impl<R: Runtime> GpuInference<R> {
         for layer_cache in cache.iter_mut() {
             layer_cache.len = seq_len;
         }
+
+        self.backend.to_f32(&logits)
+    }
+
+    /// Run a single decode step directly from paged GPU KV storage.
+    pub fn forward_token_paged(
+        &self,
+        pool: &GpuPagePool,
+        page_tables: &[&[PageId]],
+        current_tokens: usize,
+        token_id: u32,
+    ) -> Vec<f32> {
+        let cfg = &self.config;
+        let hidden_dim = cfg.hidden_dim;
+        let q_dim = cfg.num_heads * cfg.head_dim;
+        let kv_dim = cfg.num_kv_heads * cfg.head_dim;
+
+        assert_eq!(
+            page_tables.len(),
+            cfg.num_layers,
+            "expected one page table per transformer layer"
+        );
+
+        let mut hidden = self.backend.zeros(hidden_dim);
+        self.lookup_embedding_row(
+            &self.weights.token_embedding,
+            token_id,
+            hidden_dim,
+            &mut hidden,
+        );
+
+        if matches!(&cfg.pos_encoding, GpuPosEncoding::Learned) {
+            if let Some(pos_emb) = &self.weights.position_embedding {
+                let mut pos_buf = self.backend.zeros(hidden_dim);
+                self.lookup_embedding_row(pos_emb, current_tokens as u32, hidden_dim, &mut pos_buf);
+                self.backend.add_inplace(&mut hidden, &pos_buf);
+            }
+        }
+
+        if let Some(scale) = cfg.embedding_scale {
+            self.scale_inplace(&mut hidden, scale);
+        }
+
+        let mut normed = self.backend.zeros(hidden_dim);
+        let mut parallel_normed = matches!(cfg.block_style, GpuBlockStyle::Parallel)
+            .then(|| self.backend.zeros(hidden_dim));
+        let mut q = self.backend.zeros(q_dim);
+        let mut k = self.backend.zeros(kv_dim);
+        let mut v = self.backend.zeros(kv_dim);
+        let mut attn_output = self.backend.zeros(q_dim);
+        let mut head_out = self.backend.zeros(cfg.head_dim);
+        let mut proj_out = self.backend.zeros(hidden_dim);
+        let mut gate = self.backend.zeros(cfg.intermediate_dim);
+        let mut up = self.backend.zeros(cfg.intermediate_dim);
+        let mut down = self.backend.zeros(hidden_dim);
+
+        for layer_idx in 0..cfg.num_layers {
+            let layer = &self.weights.layers[layer_idx];
+
+            self.norm_hidden(
+                &hidden,
+                &layer.attn_norm,
+                layer.attn_norm_bias.as_ref(),
+                &mut normed,
+            );
+
+            match cfg.block_style {
+                GpuBlockStyle::Sequential => {
+                    self.run_attention_paged(
+                        layer,
+                        pool,
+                        page_tables[layer_idx],
+                        current_tokens,
+                        &normed,
+                        &mut q,
+                        &mut k,
+                        &mut v,
+                        &mut attn_output,
+                        &mut head_out,
+                        &mut proj_out,
+                    );
+                    self.backend.add_inplace(&mut hidden, &proj_out);
+
+                    self.norm_hidden(
+                        &hidden,
+                        &layer.ffn_norm,
+                        layer.ffn_norm_bias.as_ref(),
+                        &mut normed,
+                    );
+                    self.compute_ffn(layer, &normed, &mut gate, &mut up, &mut down);
+                    self.backend.add_inplace(&mut hidden, &down);
+                }
+                GpuBlockStyle::Parallel => {
+                    let saved = parallel_normed
+                        .as_mut()
+                        .expect("parallel block requires saved normed buffer");
+                    self.copy_slice(&normed, 0, saved, 0, hidden_dim);
+
+                    self.run_attention_paged(
+                        layer,
+                        pool,
+                        page_tables[layer_idx],
+                        current_tokens,
+                        &normed,
+                        &mut q,
+                        &mut k,
+                        &mut v,
+                        &mut attn_output,
+                        &mut head_out,
+                        &mut proj_out,
+                    );
+                    self.compute_ffn(layer, saved, &mut gate, &mut up, &mut down);
+
+                    self.backend.add_inplace(&mut hidden, &proj_out);
+                    self.backend.add_inplace(&mut hidden, &down);
+                }
+            }
+        }
+
+        self.norm_hidden(
+            &hidden,
+            &self.weights.final_norm,
+            self.weights.final_norm_bias.as_ref(),
+            &mut normed,
+        );
+
+        let mut logits = self.backend.zeros(cfg.vocab_size);
+        self.backend.matvec(
+            &self.weights.lm_head,
+            &normed,
+            &mut logits,
+            cfg.vocab_size,
+            hidden_dim,
+        );
 
         self.backend.to_f32(&logits)
     }

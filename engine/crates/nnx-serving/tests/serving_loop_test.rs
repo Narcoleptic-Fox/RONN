@@ -7,6 +7,8 @@
 //! - Outputs are finite and correctly shaped
 //! - Memory is properly managed (pages freed after completion)
 
+#[cfg(feature = "gpu")]
+use nnx_core::device::Device;
 use nnx_serving::backend::ServingEngine;
 use nnx_serving::config::ServingConfig;
 use nnx_serving::sequence::FinishReason;
@@ -157,6 +159,7 @@ fn full_serving_loop_three_sequences() {
         enable_prefix_caching: false,
         max_prefix_cache_entries: 64,
         max_prefill_tokens: 0,
+        gpu_kv_quantization: Default::default(),
     };
 
     let mut engine = ServingEngine::new(model, config).unwrap();
@@ -226,6 +229,7 @@ fn serving_loop_with_prefix_caching() {
         enable_prefix_caching: true,
         max_prefix_cache_entries: 64,
         max_prefill_tokens: 0,
+        gpu_kv_quantization: Default::default(),
     };
 
     let mut engine = ServingEngine::new(model, config).unwrap();
@@ -301,6 +305,7 @@ fn staggered_arrivals() {
         enable_prefix_caching: false,
         max_prefix_cache_entries: 64,
         max_prefill_tokens: 0,
+        gpu_kv_quantization: Default::default(),
     };
 
     let mut engine = ServingEngine::new(model, config).unwrap();
@@ -337,4 +342,50 @@ fn staggered_arrivals() {
     }
 
     assert_eq!(finished, 2, "both sequences should finish");
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+fn full_serving_loop_gpu_three_sequences() {
+    let model = make_model();
+    let config = ServingConfig {
+        page_size: 4,
+        max_pages: 512,
+        max_sequences: 8,
+        max_batch_size: 4,
+        enable_prefix_caching: false,
+        max_prefix_cache_entries: 64,
+        max_prefill_tokens: 0,
+        gpu_kv_quantization: Default::default(),
+    };
+
+    let mut engine = ServingEngine::new_with_device(model, config, Device::Gpu(0)).unwrap();
+
+    engine.add_request(vec![1, 2, 3, 4], 3);
+    engine.add_request(vec![5, 6], 2);
+    engine.add_request(vec![7, 8, 9, 10, 11, 12], 1);
+
+    let mut finished = Vec::new();
+    let mut iteration = 0;
+    while engine.has_work() && iteration < 20 {
+        let output = engine.step().unwrap();
+        iteration += 1;
+
+        for step_out in &output.outputs {
+            assert_eq!(step_out.logits.len(), 64);
+            assert!(step_out.logits.iter().all(|v| v.is_finite()));
+            engine.on_token_generated(step_out.seq_id, argmax(&step_out.logits), false);
+        }
+
+        finished.extend(output.finished.iter().cloned());
+    }
+
+    assert_eq!(engine.device(), Device::Gpu(0));
+    assert_eq!(finished.len(), 3);
+    assert!(
+        finished
+            .iter()
+            .all(|(_, reason)| *reason == FinishReason::MaxTokens)
+    );
+    assert!(!engine.has_work());
 }

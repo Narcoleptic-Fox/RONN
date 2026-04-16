@@ -6,13 +6,18 @@
 use crate::block_manager::BlockAllocator;
 use crate::config::ServingConfig;
 use crate::paged_cache::{PagedLayerView, SequencePageTable};
-use crate::prefix_cache::{PrefixCache, compute_hash_chain};
+use crate::prefix_cache::{compute_hash_chain, PrefixCache};
 use crate::scheduler::{Scheduler, SchedulerOutput, SchedulerStats};
 use crate::sequence::{FinishReason, SequenceId};
 
+use nnx_core::device::Device;
 use nnx_core::error::{EngineError, Result};
+#[cfg(feature = "gpu")]
+use nnx_cubecl::{GpuPagePool, GpuPagedKvQuantConfig};
 use nnx_transformer::block;
 use nnx_transformer::config::{ModelConfig, NormType};
+#[cfg(feature = "gpu")]
+use nnx_transformer::gpu::GpuModel;
 use nnx_transformer::model::{Model, ModelWeights};
 
 /// Output from one step of serving: per-sequence logits.
@@ -44,6 +49,8 @@ pub struct IterationOutput {
 pub struct ServingEngine {
     /// The loaded model (weights + config).
     model: Model,
+    /// Execution device for forward passes.
+    device: Device,
     /// Page allocator for all sequences.
     allocator: BlockAllocator,
     /// Continuous batching scheduler.
@@ -52,11 +59,22 @@ pub struct ServingEngine {
     prefix_cache: PrefixCache,
     /// Serving configuration.
     config: ServingConfig,
+    /// Optional GPU-resident model used when `device` is GPU.
+    #[cfg(feature = "gpu")]
+    gpu_model: Option<GpuModel>,
+    /// Allocator-backed GPU page storage used as the serving-time source of truth.
+    #[cfg(feature = "gpu")]
+    gpu_page_pool: Option<GpuPagePool>,
 }
 
 impl ServingEngine {
     /// Create a new serving engine for a loaded model.
     pub fn new(model: Model, config: ServingConfig) -> Result<Self> {
+        Self::new_with_device(model, config, Device::Cpu)
+    }
+
+    /// Create a new serving engine targeting a specific execution device.
+    pub fn new_with_device(model: Model, config: ServingConfig, device: Device) -> Result<Self> {
         config
             .validate()
             .map_err(|e| EngineError::Serving(format!("invalid serving config: {}", e)))?;
@@ -80,12 +98,52 @@ impl ServingEngine {
         let scheduler = Scheduler::new(config.clone(), num_layers);
         let prefix_cache = PrefixCache::new(config.enable_prefix_caching);
 
+        if matches!(device, Device::Unified(_)) {
+            return Err(EngineError::Device(
+                "Unified memory devices are not yet supported by ServingEngine".into(),
+            ));
+        }
+
+        #[cfg(feature = "gpu")]
+        let gpu_model = if device.is_gpu() {
+            Some(
+                GpuModel::from_cpu_model(&model)
+                    .map_err(|e| EngineError::Device(format!("GPU upload failed: {}", e)))?,
+            )
+        } else {
+            None
+        };
+
+        #[cfg(feature = "gpu")]
+        let gpu_page_pool = gpu_model
+            .as_ref()
+            .map(|gpu_model| {
+                let quant_config = config.gpu_kv_quantization.enabled.then_some(
+                    GpuPagedKvQuantConfig {
+                        residual_sketch_dim: config.gpu_kv_quantization.residual_sketch_dim,
+                    },
+                );
+                gpu_model.new_page_pool(max_pages, config.page_size, quant_config)
+            });
+
+        #[cfg(not(feature = "gpu"))]
+        if device.is_gpu() {
+            return Err(EngineError::Device(
+                "GPU serving requires the 'gpu' feature to be enabled".into(),
+            ));
+        }
+
         Ok(Self {
             model,
+            device,
             allocator,
             scheduler,
             prefix_cache,
             config,
+            #[cfg(feature = "gpu")]
+            gpu_model,
+            #[cfg(feature = "gpu")]
+            gpu_page_pool,
         })
     }
 
@@ -94,11 +152,42 @@ impl ServingEngine {
     /// If prefix caching is enabled, the engine will look up the prompt
     /// in the prefix cache and share pages for any matching prefix,
     /// skipping prefill for that portion.
+    ///
+    /// Empty prompts are rejected because the serving engine does not yet
+    /// have model-specific BOS bootstrapping.
     pub fn add_request(&mut self, prompt_tokens: Vec<u32>, max_new_tokens: usize) -> SequenceId {
+        self.try_add_request(prompt_tokens, max_new_tokens)
+            .expect("invalid serving request")
+    }
+
+    /// Try to add a new request to the serving engine.
+    pub fn try_add_request(
+        &mut self,
+        prompt_tokens: Vec<u32>,
+        max_new_tokens: usize,
+    ) -> Result<SequenceId> {
+        if prompt_tokens.is_empty() {
+            return Err(EngineError::Serving(
+                "empty prompts are not supported; prepend a BOS token or provide at least one token"
+                    .into(),
+            ));
+        }
+
         // Query prefix cache before admission.
-        let lookup = self
+        let mut lookup = self
             .prefix_cache
             .lookup(&prompt_tokens, self.config.page_size);
+
+        // A page-aligned full cache hit cannot currently be served correctly
+        // because decode expects a pending token to append. Recompute the last
+        // full page so the engine produces next-token logits from a normal
+        // prefill path instead of replaying the final cached token.
+        if lookup.cached_tokens == prompt_tokens.len() && lookup.cached_pages > 0 {
+            lookup.cached_pages -= 1;
+            lookup.cached_tokens = lookup.cached_pages * self.config.page_size;
+            lookup.matched_pages.truncate(lookup.cached_pages);
+        }
+
         let seq_id = self
             .scheduler
             .add_request(prompt_tokens.clone(), max_new_tokens);
@@ -120,7 +209,7 @@ impl ServingEngine {
             }
         }
 
-        seq_id
+        Ok(seq_id)
     }
 
     /// Cancel a request. Frees any allocated KV pages.
@@ -220,6 +309,11 @@ impl ServingEngine {
         &self.model.config
     }
 
+    /// Current serving device.
+    pub fn device(&self) -> Device {
+        self.device
+    }
+
     // ------------------------------------------------------------------
     // Internal forward pass implementations
     // ------------------------------------------------------------------
@@ -232,12 +326,17 @@ impl ServingEngine {
             .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
 
         let start_idx = seq.prefilled_tokens;
-        let token_ids = &seq.prompt_tokens[start_idx..start_idx + num_tokens];
+        let token_ids = seq.prompt_tokens[start_idx..start_idx + num_tokens].to_vec();
         let cfg = &self.model.config;
+
+        #[cfg(feature = "gpu")]
+        if self.device.is_gpu() {
+            return self.run_prefill_gpu(seq_id, &token_ids);
+        }
 
         if num_tokens == 1 {
             // Single-token prefill: use decode path.
-            return self.forward_single_token(seq_id, token_ids[0]);
+            return self.forward_single_token_cpu(seq_id, token_ids[0]);
         }
 
         // Batch prefill.
@@ -319,11 +418,16 @@ impl ServingEngine {
             .or_else(|| seq.prompt_tokens.last().copied())
             .ok_or_else(|| EngineError::Serving("no token available for decode".into()))?;
 
-        self.forward_single_token(seq_id, token_id)
+        #[cfg(feature = "gpu")]
+        if self.device.is_gpu() {
+            return self.forward_single_token_gpu(seq_id, token_id);
+        }
+
+        self.forward_single_token_cpu(seq_id, token_id)
     }
 
     /// Forward pass for a single token through all layers using paged cache.
-    fn forward_single_token(&mut self, seq_id: SequenceId, token_id: u32) -> Result<Vec<f32>> {
+    fn forward_single_token_cpu(&mut self, seq_id: SequenceId, token_id: u32) -> Result<Vec<f32>> {
         let cfg = &self.model.config;
 
         // 1. Embedding.
@@ -471,6 +575,197 @@ impl ServingEngine {
         self.model.weights.lm_head.matvec(&normed, &mut logits);
         Ok(logits)
     }
+
+    /// Ensure the sequence has enough allocator-owned pages for an upcoming GPU write.
+    fn ensure_sequence_pages(&mut self, seq_id: SequenceId, tokens_added: usize) -> Result<()> {
+        if tokens_added == 0 {
+            return Ok(());
+        }
+
+        let (existing_pages, final_pages) = {
+            let seq = self
+                .scheduler
+                .get_sequence(seq_id)
+                .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
+            let final_tokens = seq.page_table.num_tokens() + tokens_added;
+            (
+                seq.page_table.pages_per_layer(),
+                final_tokens.div_ceil(self.config.page_size),
+            )
+        };
+        let new_pages_per_layer = final_pages.saturating_sub(existing_pages);
+
+        if new_pages_per_layer > 0 {
+            let mut reserved_pages: Vec<Vec<nnx_core::PageId>> = (0..self.model.config.num_layers)
+                .map(|_| Vec::with_capacity(new_pages_per_layer))
+                .collect();
+
+            for layer_idx in 0..self.model.config.num_layers {
+                for _ in 0..new_pages_per_layer {
+                    match self.allocator.allocate() {
+                        Ok(page_id) => reserved_pages[layer_idx].push(page_id),
+                        Err(e) => {
+                            let reserved: Vec<_> = reserved_pages
+                                .iter()
+                                .flat_map(|pages| pages.iter().copied())
+                                .collect();
+                            if let Err(rollback_err) = self.allocator.free_sequence_pages(&reserved) {
+                                return Err(EngineError::Cache(format!(
+                                    "failed to allocate page for sequence {:?}, layer {}: {}; rollback also failed: {}",
+                                    seq_id, layer_idx, e, rollback_err
+                                )));
+                            }
+                            return Err(EngineError::Cache(format!(
+                                "failed to allocate page for sequence {:?}, layer {}: {}",
+                                seq_id, layer_idx, e
+                            )));
+                        }
+                    }
+                }
+            }
+
+            let seq = self.scheduler.get_sequence_mut(seq_id).ok_or_else(|| {
+                EngineError::Serving(format!("sequence {:?} not found", seq_id))
+            });
+
+            match seq {
+                Ok(seq) => {
+                    for (layer_idx, pages) in reserved_pages.iter_mut().enumerate() {
+                        seq.page_table.layer_pages_mut(layer_idx).append(pages);
+                    }
+
+                    let new_pages: Vec<_> = reserved_pages
+                        .iter()
+                        .flat_map(|pages| pages.iter().copied())
+                        .collect();
+
+                    let _ = seq;
+
+                    #[cfg(feature = "gpu")]
+                    if let (Some(pool), Some(gpu_model)) =
+                        (self.gpu_page_pool.as_mut(), self.gpu_model.as_ref())
+                    {
+                        gpu_model.mark_pages_dense(pool, &new_pages);
+                    }
+                }
+                Err(err) => {
+                    let reserved: Vec<_> = reserved_pages
+                        .iter()
+                        .flat_map(|pages| pages.iter().copied())
+                        .collect();
+                    if let Err(rollback_err) = self.allocator.free_sequence_pages(&reserved) {
+                        return Err(EngineError::Cache(format!(
+                            "{}; rollback also failed: {}",
+                            err, rollback_err
+                        )));
+                    }
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Advance the logical paged token count after a successful GPU forward pass.
+    fn advance_sequence_tokens(&mut self, seq_id: SequenceId, tokens_added: usize) -> Result<()> {
+        if tokens_added == 0 {
+            return Ok(());
+        }
+
+        let seq = self
+            .scheduler
+            .get_sequence_mut(seq_id)
+            .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
+        let final_tokens = seq.page_table.num_tokens() + tokens_added;
+        seq.page_table.set_num_tokens(final_tokens);
+        Ok(())
+    }
+
+    #[cfg(feature = "gpu")]
+    fn run_prefill_gpu(&mut self, seq_id: SequenceId, token_ids: &[u32]) -> Result<Vec<f32>> {
+        self.ensure_sequence_pages(seq_id, token_ids.len())?;
+
+        let logits = {
+            let gpu_model = self
+                .gpu_model
+                .as_ref()
+                .ok_or_else(|| EngineError::Device("GPU model is not initialized".into()))?;
+            let pool = self
+                .gpu_page_pool
+                .as_ref()
+                .ok_or_else(|| EngineError::Device("GPU page pool is not initialized".into()))?;
+            let seq = self
+                .scheduler
+                .get_sequence(seq_id)
+                .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
+            let current_tokens = seq.page_table.num_tokens();
+            let page_tables: Vec<_> = (0..self.model.config.num_layers)
+                .map(|layer_idx| seq.page_table.layer_pages(layer_idx))
+                .collect();
+
+            if token_ids.len() == 1 {
+                gpu_model.forward_token_paged(pool, &page_tables, current_tokens, token_ids[0])
+            } else {
+                gpu_model.forward_batch_paged(pool, &page_tables, current_tokens, token_ids)
+            }
+        };
+
+        self.advance_sequence_tokens(seq_id, token_ids.len())?;
+
+        if let (Some(gpu_model), Some(pool)) = (self.gpu_model.as_ref(), self.gpu_page_pool.as_mut()) {
+            let seq = self
+                .scheduler
+                .get_sequence(seq_id)
+                .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
+            let page_tables: Vec<_> = (0..self.model.config.num_layers)
+                .map(|layer_idx| seq.page_table.layer_pages(layer_idx))
+                .collect();
+            gpu_model.quantize_completed_pages(pool, &page_tables, seq.page_table.num_tokens());
+        }
+
+        Ok(logits)
+    }
+
+    #[cfg(feature = "gpu")]
+    fn forward_single_token_gpu(&mut self, seq_id: SequenceId, token_id: u32) -> Result<Vec<f32>> {
+        self.ensure_sequence_pages(seq_id, 1)?;
+
+        let logits = {
+            let gpu_model = self
+                .gpu_model
+                .as_ref()
+                .ok_or_else(|| EngineError::Device("GPU model is not initialized".into()))?;
+            let pool = self
+                .gpu_page_pool
+                .as_ref()
+                .ok_or_else(|| EngineError::Device("GPU page pool is not initialized".into()))?;
+            let seq = self
+                .scheduler
+                .get_sequence(seq_id)
+                .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
+            let current_tokens = seq.page_table.num_tokens();
+            let page_tables: Vec<_> = (0..self.model.config.num_layers)
+                .map(|layer_idx| seq.page_table.layer_pages(layer_idx))
+                .collect();
+            gpu_model.forward_token_paged(pool, &page_tables, current_tokens, token_id)
+        };
+
+        self.advance_sequence_tokens(seq_id, 1)?;
+
+        if let (Some(gpu_model), Some(pool)) = (self.gpu_model.as_ref(), self.gpu_page_pool.as_mut()) {
+            let seq = self
+                .scheduler
+                .get_sequence(seq_id)
+                .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
+            let page_tables: Vec<_> = (0..self.model.config.num_layers)
+                .map(|layer_idx| seq.page_table.layer_pages(layer_idx))
+                .collect();
+            gpu_model.quantize_completed_pages(pool, &page_tables, seq.page_table.num_tokens());
+        }
+
+        Ok(logits)
+    }
 }
 
 #[cfg(test)]
@@ -602,6 +897,7 @@ mod tests {
             enable_prefix_caching: false,
             max_prefix_cache_entries: 64,
             max_prefill_tokens: 0,
+            gpu_kv_quantization: Default::default(),
         }
     }
 
@@ -693,6 +989,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn ensure_sequence_pages_rolls_back_on_allocation_failure() {
+        let model = make_tiny_model(2);
+        let mut config = make_serving_config();
+        config.page_size = 2;
+        config.max_pages = 4;
+        let mut engine = ServingEngine::new(model, config).unwrap();
+
+        let seq_id = engine.add_request(vec![1, 2], 1);
+
+        engine.ensure_sequence_pages(seq_id, 2).unwrap();
+        engine.advance_sequence_tokens(seq_id, 2).unwrap();
+
+        let pages_before = engine.allocator_stats().used_pages;
+        let page_tables_before: Vec<Vec<_>> = {
+            let seq = engine.scheduler.get_sequence(seq_id).unwrap();
+            (0..engine.model.config.num_layers)
+                .map(|layer_idx| seq.page_table.layer_pages(layer_idx).to_vec())
+                .collect()
+        };
+
+        let err = engine.ensure_sequence_pages(seq_id, 7).unwrap_err();
+        assert!(
+            matches!(&err, EngineError::Cache(message) if message.contains("failed to allocate page")),
+            "unexpected error: {err}"
+        );
+
+        let pages_after = engine.allocator_stats().used_pages;
+        let seq = engine.scheduler.get_sequence(seq_id).unwrap();
+        let page_tables_after: Vec<Vec<_>> = (0..engine.model.config.num_layers)
+            .map(|layer_idx| seq.page_table.layer_pages(layer_idx).to_vec())
+            .collect();
+
+        assert_eq!(pages_after, pages_before, "allocator pages should roll back");
+        assert_eq!(
+            page_tables_after, page_tables_before,
+            "page tables should remain unchanged after allocation failure"
+        );
+        assert_eq!(
+            seq.page_table.num_tokens(),
+            2,
+            "token count should remain unchanged after allocation failure"
+        );
     }
 
     #[test]
@@ -807,6 +1148,77 @@ mod tests {
                 i,
                 a,
                 b,
+            );
+        }
+    }
+
+    #[test]
+    fn try_add_request_rejects_empty_prompt() {
+        let model = make_tiny_model(2);
+        let config = make_serving_config();
+        let mut engine = ServingEngine::new(model, config).unwrap();
+
+        let err = engine.try_add_request(Vec::new(), 1).unwrap_err();
+        assert!(matches!(err, EngineError::Serving(_)));
+    }
+
+    #[test]
+    fn prefix_cache_full_hit_recomputes_last_page_for_correctness() {
+        let prompt = vec![1, 2, 3, 4, 5, 6, 7, 8];
+
+        let mut uncached = ServingEngine::new(make_tiny_model(2), {
+            let mut config = make_serving_config();
+            config.enable_prefix_caching = false;
+            config.page_size = 4;
+            config
+        })
+        .unwrap();
+
+        let uncached_id = uncached.add_request(prompt.clone(), 1);
+        let uncached_logits = uncached
+            .step()
+            .unwrap()
+            .outputs
+            .into_iter()
+            .find(|out| out.seq_id == uncached_id)
+            .unwrap()
+            .logits;
+
+        let mut cached = ServingEngine::new(make_tiny_model(2), {
+            let mut config = make_serving_config();
+            config.enable_prefix_caching = true;
+            config.page_size = 4;
+            config
+        })
+        .unwrap();
+
+        let warm_id = cached.add_request(prompt.clone(), 1);
+        cached.step().unwrap();
+        cached.on_token_generated(warm_id, 10, false);
+        cached.step().unwrap();
+
+        let cached_id = cached.add_request(prompt.clone(), 1);
+        let cached_seq = cached.scheduler.get_sequence(cached_id).unwrap();
+        assert_eq!(cached_seq.prefilled_tokens, 4);
+        assert_eq!(cached_seq.page_table.num_tokens(), 4);
+
+        let cached_logits = cached
+            .step()
+            .unwrap()
+            .outputs
+            .into_iter()
+            .find(|out| out.seq_id == cached_id)
+            .unwrap()
+            .logits;
+
+        assert_eq!(uncached_logits.len(), cached_logits.len());
+        for (index, (lhs, rhs)) in uncached_logits.iter().zip(cached_logits.iter()).enumerate() {
+            assert!(
+                (lhs - rhs).abs() < 1e-5,
+                "page-aligned prefix cache mismatch at {}: uncached={}, cached={}",
+                index,
+                lhs,
+                rhs,
             );
         }
     }

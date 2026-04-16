@@ -141,19 +141,7 @@ impl Scheduler {
         };
 
         // 1. Retire finished sequences, extracting page IDs before dropping.
-        let mut i = 0;
-        while i < self.running.len() {
-            if self.running[i].is_finished() {
-                let seq = self.running.remove(i);
-                if let SequenceState::Finished { reason } = &seq.state {
-                    let pages = seq.page_table.all_pages();
-                    output.finished.push((seq.id, reason.clone(), pages));
-                }
-                self.finished_count += 1;
-            } else {
-                i += 1;
-            }
-        }
+        self.retire_finished_sequences(&mut output);
 
         // 2. Try to admit new sequences from waiting queue.
         // Track pages committed to newly-admitted sequences this step
@@ -175,6 +163,9 @@ impl Scheduler {
                 break;
             }
         }
+
+        // Requests with zero generation budget can finish during admission.
+        self.retire_finished_sequences(&mut output);
 
         // 3. Build the batch for this iteration.
         let mut batch_size = 0;
@@ -202,6 +193,22 @@ impl Scheduler {
         }
 
         output
+    }
+
+    fn retire_finished_sequences(&mut self, output: &mut SchedulerOutput) {
+        let mut i = 0;
+        while i < self.running.len() {
+            if self.running[i].is_finished() {
+                let seq = self.running.remove(i);
+                if let SequenceState::Finished { reason } = &seq.state {
+                    let pages = seq.page_table.all_pages();
+                    output.finished.push((seq.id, reason.clone(), pages));
+                }
+                self.finished_count += 1;
+            } else {
+                i += 1;
+            }
+        }
     }
 
     /// Notify the scheduler that a sequence has generated a token.
@@ -507,5 +514,25 @@ mod tests {
         );
         assert_eq!(output.decode.len(), 1, "should go straight to decode");
         assert_eq!(output.decode[0], id);
+    }
+
+    #[test]
+    fn zero_generation_budget_finishes_after_prefill_without_decode() {
+        let (mut sched, alloc) = make_scheduler(4, 32);
+        let id = sched.add_request(vec![1, 2, 3, 4], 0);
+
+        let output = sched.step(&alloc);
+        assert_eq!(output.prefill.len(), 1);
+        assert_eq!(output.prefill[0].0, id);
+        assert!(output.decode.is_empty());
+
+        sched.on_prefill_advanced(id, 4);
+
+        let output = sched.step(&alloc);
+        assert!(output.prefill.is_empty());
+        assert!(output.decode.is_empty());
+        assert_eq!(output.finished.len(), 1);
+        assert_eq!(output.finished[0].0, id);
+        assert_eq!(output.finished[0].1, FinishReason::MaxTokens);
     }
 }

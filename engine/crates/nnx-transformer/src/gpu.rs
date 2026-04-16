@@ -14,7 +14,11 @@
 //! `nnx-transformer`.
 
 use nnx_core::gpu_config::{GpuConfig, GpuPosEncoding};
-use nnx_cubecl::{GpuInference, GpuLayerCache, RawLayerWeights, WgpuRuntime};
+use nnx_core::PageId;
+use nnx_cubecl::{
+    GpuInference, GpuLayerCache, GpuPagePool, GpuPagedKvQuantConfig, RawLayerWeights,
+    WgpuRuntime,
+};
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -196,6 +200,30 @@ impl GpuModel {
         logits
     }
 
+    /// Run a single decode step against allocator-owned paged GPU KV storage.
+    pub fn forward_token_paged(
+        &self,
+        pool: &GpuPagePool,
+        page_tables: &[&[PageId]],
+        current_tokens: usize,
+        token_id: u32,
+    ) -> Vec<f32> {
+        self.inner
+            .forward_token_paged(pool, page_tables, current_tokens, token_id)
+    }
+
+    /// Run prompt prefill directly against allocator-owned paged GPU KV storage.
+    pub fn forward_batch_paged(
+        &self,
+        pool: &GpuPagePool,
+        page_tables: &[&[PageId]],
+        current_tokens: usize,
+        token_ids: &[u32],
+    ) -> Vec<f32> {
+        self.inner
+            .forward_batch_paged(pool, page_tables, current_tokens, token_ids)
+    }
+
     /// Access the GPU model configuration.
     pub fn config(&self) -> &nnx_core::gpu_config::GpuConfig {
         self.inner.config()
@@ -204,6 +232,78 @@ impl GpuModel {
     /// Vocabulary size (convenience accessor for NnxBackend dispatch).
     pub fn vocab_size(&self) -> usize {
         self.inner.config().vocab_size
+    }
+
+    /// Allocate a GPU page pool compatible with this model's KV geometry.
+    pub fn new_page_pool(
+        &self,
+        num_pages: usize,
+        page_size: usize,
+        quant_config: Option<GpuPagedKvQuantConfig>,
+    ) -> GpuPagePool {
+        self.inner.new_page_pool(num_pages, page_size, quant_config)
+    }
+
+    pub fn quantize_completed_pages(
+        &self,
+        pool: &mut GpuPagePool,
+        page_tables: &[&[PageId]],
+        total_tokens: usize,
+    ) {
+        self.inner
+            .quantize_completed_pages(pool, page_tables, total_tokens)
+    }
+
+    pub fn mark_pages_dense(&self, pool: &mut GpuPagePool, page_ids: &[PageId]) {
+        self.inner.mark_pages_dense(pool, page_ids)
+    }
+
+    /// Mirror one complete logical page from a request cache into the shared GPU page pool.
+    pub fn mirror_prefix_page(
+        &self,
+        cache: &GpuRequestCache,
+        pool: &GpuPagePool,
+        page_idx: usize,
+        layer_page_ids: &[PageId],
+        page_size: usize,
+    ) {
+        assert_eq!(
+            cache.cache.len(),
+            layer_page_ids.len(),
+            "expected one physical page id per transformer layer"
+        );
+        for (layer_cache, &page_id) in cache.cache.iter().zip(layer_page_ids.iter()) {
+            self.inner
+                .copy_cache_page_to_pool(layer_cache, page_idx, page_size, pool, page_id);
+        }
+    }
+
+    /// Hydrate a new request cache from shared GPU prefix pages.
+    pub fn hydrate_prefix_pages(
+        &self,
+        cache: &mut GpuRequestCache,
+        pool: &GpuPagePool,
+        matched_pages: &[Vec<PageId>],
+        page_size: usize,
+        cached_tokens: usize,
+    ) {
+        assert_eq!(
+            cached_tokens,
+            matched_pages.len() * page_size,
+            "cached token count must equal the number of hydrated full pages"
+        );
+        for (page_idx, layer_page_ids) in matched_pages.iter().enumerate() {
+            assert_eq!(
+                cache.cache.len(),
+                layer_page_ids.len(),
+                "expected one cached physical page per transformer layer"
+            );
+            for (layer_cache, &page_id) in cache.cache.iter_mut().zip(layer_page_ids.iter()) {
+                self.inner
+                    .copy_pool_page_to_cache(pool, page_id, layer_cache, page_idx, page_size);
+            }
+        }
+        cache.set_position(cached_tokens);
     }
 
     #[cfg(test)]
@@ -268,5 +368,18 @@ impl GpuRequestCache {
     pub fn memory_bytes(&self) -> usize {
         let per_layer = 2 * self.capacity * self.kv_dim * std::mem::size_of::<f32>();
         per_layer * self.cache.len()
+    }
+
+    pub(crate) fn set_position(&mut self, position: usize) {
+        assert!(
+            position <= self.capacity,
+            "cache position {} exceeds capacity {}",
+            position,
+            self.capacity
+        );
+        for layer in &mut self.cache {
+            layer.len = position;
+        }
+        self.position = position;
     }
 }

@@ -7,18 +7,94 @@
 use cubecl::prelude::*;
 use cubecl::wgpu::WgpuRuntime;
 use nnx_core::backend::KernelBackend;
+use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
+use nnx_core::PageId;
 use nnx_cubecl::attention;
 use nnx_cubecl::backend::CubeclBackend;
 use nnx_cubecl::paged_kv::{
-    GpuPagePool, paged_attention_contract_kernel, paged_attention_scores_kernel,
-    paged_cache_append_kernel,
+    paged_attention_contract_kernel, paged_attention_scores_kernel, paged_cache_append_kernel,
+    GpuPagePool,
 };
-use nnx_serving::page::PageId;
+use nnx_cubecl::{GpuInference, GpuPagedKvQuantConfig, RawLayerWeights};
 
 type R = WgpuRuntime;
 
 fn backend() -> CubeclBackend<R> {
     CubeclBackend::<R>::new()
+}
+
+fn tiny_gpu_config(num_layers: usize) -> GpuConfig {
+    GpuConfig {
+        num_layers,
+        hidden_dim: 8,
+        num_heads: 2,
+        num_kv_heads: 2,
+        head_dim: 4,
+        intermediate_dim: 16,
+        vocab_size: 32,
+        max_context_length: 64,
+        pos_encoding: GpuPosEncoding::RoPE { freq_base: 10000.0 },
+        rms_norm_eps: 1e-5,
+        embedding_scale: None,
+        norm_type: GpuNormType::RMSNorm,
+        ffn_type: GpuFFNType::SwiGLU,
+        block_style: GpuBlockStyle::Sequential,
+        has_qkv_bias: false,
+        has_output_bias: false,
+    }
+}
+
+fn tiny_raw_layer(seed: usize) -> RawLayerWeights {
+    let hidden_dim = 8usize;
+    let q_dim = 2 * 4;
+    let kv_dim = 2 * 4;
+    let intermediate_dim = 16usize;
+
+    RawLayerWeights {
+        attn_norm: vec![1.0f32 + seed as f32 * 0.001; hidden_dim],
+        ffn_norm: vec![1.0f32 + seed as f32 * 0.0015; hidden_dim],
+        wq: (0..q_dim * hidden_dim)
+            .map(|idx| ((idx + seed) % 7) as f32 * 0.01 - 0.03)
+            .collect(),
+        wk: (0..kv_dim * hidden_dim)
+            .map(|idx| ((idx + seed) % 11) as f32 * 0.01 - 0.05)
+            .collect(),
+        wv: (0..kv_dim * hidden_dim)
+            .map(|idx| ((idx + seed) % 13) as f32 * 0.01 - 0.06)
+            .collect(),
+        wo: (0..hidden_dim * q_dim)
+            .map(|idx| ((idx + seed) % 5) as f32 * 0.01 - 0.02)
+            .collect(),
+        w_gate: (0..intermediate_dim * hidden_dim)
+            .map(|idx| ((idx + seed) % 9) as f32 * 0.005 - 0.02)
+            .collect(),
+        w_up: (0..intermediate_dim * hidden_dim)
+            .map(|idx| ((idx + seed) % 10) as f32 * 0.005 - 0.025)
+            .collect(),
+        w_down: (0..hidden_dim * intermediate_dim)
+            .map(|idx| ((idx + seed) % 8) as f32 * 0.005 - 0.015)
+            .collect(),
+        bq: None,
+        bk: None,
+        bv: None,
+        bo: None,
+        attn_norm_bias: None,
+        ffn_norm_bias: None,
+    }
+}
+
+fn tiny_inference(num_layers: usize) -> GpuInference<R> {
+    let cfg = tiny_gpu_config(num_layers);
+    GpuInference::<R>::from_raw_weights(
+        cfg,
+        &vec![0.02f32; 32 * 8],
+        None,
+        &vec![0.03f32; 32 * 8],
+        &vec![1.0f32; 8],
+        None,
+        (0..num_layers).map(|layer_idx| tiny_raw_layer(layer_idx * 17)).collect(),
+    )
+    .unwrap()
 }
 
 fn assert_close(a: &[f32], b: &[f32], tol: f32, msg: &str) {
@@ -134,7 +210,8 @@ fn launch_paged_scores(
     let q_gpu = backend.from_f32(q_head);
     let page_table_gpu = backend.from_u32(page_table);
     let scores_gpu = backend.zeros(num_tokens);
-
+    let dummy_u32 = backend.from_u32(&[0u32]);
+    let quant_payload = pool.quantized().map(|storage| storage.quant_payload());
     unsafe {
         paged_attention_scores_kernel::launch::<R>(
             client,
@@ -142,6 +219,11 @@ fn launch_paged_scores(
             CubeDim::new(1, 1, 1),
             ArrayArg::from_raw_parts::<f32>(&q_gpu.handle, pool.head_dim(), 1),
             ArrayArg::from_raw_parts::<f32>(&pool.flat_buffer().handle, pool.flat_buffer().len, 1),
+            ArrayArg::from_raw_parts::<u32>(
+                &quant_payload.unwrap_or(&dummy_u32).handle,
+                quant_payload.map(|buffer| buffer.len).unwrap_or(dummy_u32.len),
+                1,
+            ),
             ArrayArg::from_raw_parts::<u32>(&page_table_gpu.handle, page_table.len(), 1),
             ArrayArg::from_raw_parts::<f32>(&scores_gpu.handle, num_tokens, 1),
             ScalarArg::new(pool.page_stride() as u32),
@@ -149,7 +231,6 @@ fn launch_paged_scores(
             ScalarArg::new(num_tokens as u32),
             ScalarArg::new(kv_head as u32),
             ScalarArg::new(pool.head_dim() as u32),
-            ScalarArg::new(pool.kv_dim() as u32),
             ScalarArg::new(scale),
         );
     }
@@ -201,7 +282,8 @@ fn launch_paged_contract(
     let scores_gpu = backend.from_f32(scores);
     let page_table_gpu = backend.from_u32(page_table);
     let output_gpu = backend.zeros(pool.head_dim());
-
+    let dummy_u32 = backend.from_u32(&[0u32]);
+    let quant_payload = pool.quantized().map(|storage| storage.quant_payload());
     unsafe {
         paged_attention_contract_kernel::launch::<R>(
             client,
@@ -209,6 +291,11 @@ fn launch_paged_contract(
             CubeDim::new(1, 1, 1),
             ArrayArg::from_raw_parts::<f32>(&scores_gpu.handle, num_tokens, 1),
             ArrayArg::from_raw_parts::<f32>(&pool.flat_buffer().handle, pool.flat_buffer().len, 1),
+            ArrayArg::from_raw_parts::<u32>(
+                &quant_payload.unwrap_or(&dummy_u32).handle,
+                quant_payload.map(|buffer| buffer.len).unwrap_or(dummy_u32.len),
+                1,
+            ),
             ArrayArg::from_raw_parts::<u32>(&page_table_gpu.handle, page_table.len(), 1),
             ArrayArg::from_raw_parts::<f32>(&output_gpu.handle, pool.head_dim(), 1),
             ScalarArg::new(pool.page_stride() as u32),
@@ -216,7 +303,6 @@ fn launch_paged_contract(
             ScalarArg::new(num_tokens as u32),
             ScalarArg::new(kv_head as u32),
             ScalarArg::new(pool.head_dim() as u32),
-            ScalarArg::new(pool.kv_dim() as u32),
         );
     }
 
@@ -468,4 +554,131 @@ fn paged_attention_supports_gqa() {
             &format!("gqa contract head {head_idx}"),
         );
     }
+}
+
+#[test]
+fn paged_forward_matches_contiguous_gpu_cache() {
+    let gpu = tiny_inference(2);
+    let pool = gpu.new_page_pool(4, 2, None);
+    let mut contiguous_cache = gpu.new_cache();
+    let layer0_page_ids = [PageId(0), PageId(1)];
+    let layer1_page_ids = [PageId(2), PageId(3)];
+    let page_tables = [layer0_page_ids.as_slice(), layer1_page_ids.as_slice()];
+    let prompt = [1u32, 2, 3];
+
+    let contiguous_prefill = gpu.forward_batch(&mut contiguous_cache, &prompt);
+    let paged_prefill = gpu.forward_batch_paged(&pool, &page_tables, 0, &prompt);
+    assert_close(
+        &paged_prefill,
+        &contiguous_prefill,
+        1e-5,
+        "paged prefill vs contiguous prefill",
+    );
+
+    let contiguous_decode = gpu.forward_token(&mut contiguous_cache, 4);
+    let paged_decode = gpu.forward_token_paged(&pool, &page_tables, prompt.len(), 4);
+    assert_close(
+        &paged_decode,
+        &contiguous_decode,
+        1e-5,
+        "paged decode vs contiguous decode",
+    );
+}
+
+#[test]
+fn quantized_paged_forward_matches_contiguous_gpu_cache() {
+    let gpu = tiny_inference(2);
+    let mut pool = gpu.new_page_pool(
+        4,
+        4,
+        Some(GpuPagedKvQuantConfig {
+            residual_sketch_dim: 16,
+        }),
+    );
+    let mut contiguous_cache = gpu.new_cache();
+    let layer0_page_ids = [PageId(0), PageId(1)];
+    let layer1_page_ids = [PageId(2), PageId(3)];
+    let page_tables = [layer0_page_ids.as_slice(), layer1_page_ids.as_slice()];
+    let prompt = [1u32, 2, 3, 4, 5];
+
+    let contiguous_prefill = gpu.forward_batch(&mut contiguous_cache, &prompt);
+    let paged_prefill = gpu.forward_batch_paged(&pool, &page_tables, 0, &prompt);
+    assert_close(
+        &paged_prefill,
+        &contiguous_prefill,
+        1e-5,
+        "quantized paged prefill vs contiguous prefill",
+    );
+
+    gpu.quantize_completed_pages(&mut pool, &page_tables, prompt.len());
+    assert!(pool.is_page_quantized(PageId(0)));
+    assert!(pool.is_page_quantized(PageId(2)));
+
+    let contiguous_decode = gpu.forward_token(&mut contiguous_cache, 4);
+    let quantized_decode = gpu.forward_token_paged(&pool, &page_tables, prompt.len(), 4);
+    assert_close(
+        &quantized_decode,
+        &contiguous_decode,
+        1e-4,
+        "quantized paged decode vs contiguous decode",
+    );
+}
+
+#[test]
+fn quantized_paged_forward_matches_contiguous_across_multiple_quantized_pages() {
+    let gpu = tiny_inference(2);
+    let mut pool = gpu.new_page_pool(
+        6,
+        4,
+        Some(GpuPagedKvQuantConfig {
+            residual_sketch_dim: 16,
+        }),
+    );
+    let mut contiguous_cache = gpu.new_cache();
+    let layer0_page_ids = [PageId(0), PageId(1), PageId(2)];
+    let layer1_page_ids = [PageId(3), PageId(4), PageId(5)];
+    let page_tables = [layer0_page_ids.as_slice(), layer1_page_ids.as_slice()];
+    let prompt = [1u32, 2, 3, 4, 5, 6, 7, 8, 9];
+
+    let contiguous_prefill = gpu.forward_batch(&mut contiguous_cache, &prompt);
+    let paged_prefill = gpu.forward_batch_paged(&pool, &page_tables, 0, &prompt);
+    assert_close(
+        &paged_prefill,
+        &contiguous_prefill,
+        1e-5,
+        "multi-page quantized paged prefill vs contiguous prefill",
+    );
+
+    gpu.quantize_completed_pages(&mut pool, &page_tables, prompt.len());
+    assert!(pool.is_page_quantized(PageId(0)));
+    assert!(pool.is_page_quantized(PageId(1)));
+    assert!(pool.is_page_quantized(PageId(3)));
+    assert!(pool.is_page_quantized(PageId(4)));
+    assert!(!pool.is_page_quantized(PageId(2)));
+    assert!(!pool.is_page_quantized(PageId(5)));
+
+    let contiguous_decode = gpu.forward_token(&mut contiguous_cache, 10);
+    let quantized_decode = gpu.forward_token_paged(&pool, &page_tables, prompt.len(), 10);
+    assert_close(
+        &quantized_decode,
+        &contiguous_decode,
+        1e-4,
+        "multi-page quantized paged decode vs contiguous decode",
+    );
+}
+
+#[test]
+#[should_panic(expected = "unsupported")]
+fn quantized_page_pool_rejects_unsupported_residual_sketch_dim() {
+    let backend = backend();
+    let _pool = GpuPagePool::new_with_quantization(
+        1,
+        4,
+        2,
+        4,
+        Some(GpuPagedKvQuantConfig {
+            residual_sketch_dim: 8,
+        }),
+        &backend,
+    );
 }
