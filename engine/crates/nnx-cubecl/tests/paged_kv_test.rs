@@ -6,14 +6,14 @@
 
 use cubecl::prelude::*;
 use cubecl::wgpu::WgpuRuntime;
+use nnx_core::PageId;
 use nnx_core::backend::KernelBackend;
 use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
-use nnx_core::PageId;
 use nnx_cubecl::attention;
 use nnx_cubecl::backend::CubeclBackend;
 use nnx_cubecl::paged_kv::{
-    paged_attention_contract_kernel, paged_attention_scores_kernel, paged_cache_append_kernel,
-    GpuPagePool,
+    GpuPagePool, paged_attention_contract_kernel, paged_attention_scores_kernel,
+    paged_cache_append_kernel,
 };
 use nnx_cubecl::{GpuInference, GpuPagedKvQuantConfig, RawLayerWeights};
 
@@ -92,7 +92,9 @@ fn tiny_inference(num_layers: usize) -> GpuInference<R> {
         &vec![0.03f32; 32 * 8],
         &vec![1.0f32; 8],
         None,
-        (0..num_layers).map(|layer_idx| tiny_raw_layer(layer_idx * 17)).collect(),
+        (0..num_layers)
+            .map(|layer_idx| tiny_raw_layer(layer_idx * 17))
+            .collect(),
     )
     .unwrap()
 }
@@ -221,7 +223,9 @@ fn launch_paged_scores(
             ArrayArg::from_raw_parts::<f32>(&pool.flat_buffer().handle, pool.flat_buffer().len, 1),
             ArrayArg::from_raw_parts::<u32>(
                 &quant_payload.unwrap_or(&dummy_u32).handle,
-                quant_payload.map(|buffer| buffer.len).unwrap_or(dummy_u32.len),
+                quant_payload
+                    .map(|buffer| buffer.len)
+                    .unwrap_or(dummy_u32.len),
                 1,
             ),
             ArrayArg::from_raw_parts::<u32>(&page_table_gpu.handle, page_table.len(), 1),
@@ -293,7 +297,9 @@ fn launch_paged_contract(
             ArrayArg::from_raw_parts::<f32>(&pool.flat_buffer().handle, pool.flat_buffer().len, 1),
             ArrayArg::from_raw_parts::<u32>(
                 &quant_payload.unwrap_or(&dummy_u32).handle,
-                quant_payload.map(|buffer| buffer.len).unwrap_or(dummy_u32.len),
+                quant_payload
+                    .map(|buffer| buffer.len)
+                    .unwrap_or(dummy_u32.len),
                 1,
             ),
             ArrayArg::from_raw_parts::<u32>(&page_table_gpu.handle, page_table.len(), 1),

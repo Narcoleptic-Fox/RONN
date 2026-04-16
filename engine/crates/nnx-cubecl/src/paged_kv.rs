@@ -6,8 +6,8 @@
 //! `[token][K|V][kv_head][head_dim]`.
 
 use cubecl::prelude::*;
-use nnx_core::backend::KernelBackend;
 use nnx_core::PageId;
+use nnx_core::backend::KernelBackend;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
 
@@ -183,14 +183,7 @@ impl GpuPagePool {
         head_dim: usize,
         backend: &CubeclBackend<R>,
     ) -> Self {
-        Self::new_with_quantization(
-            num_pages,
-            page_size,
-            num_kv_heads,
-            head_dim,
-            None,
-            backend,
-        )
+        Self::new_with_quantization(num_pages, page_size, num_kv_heads, head_dim, None, backend)
     }
 
     pub fn new_with_quantization<R: Runtime>(
@@ -233,8 +226,7 @@ impl GpuPagePool {
             let words_per_token = kv_dim.div_ceil(4);
             let residual_words_per_token = config.residual_words_per_token();
             let residual_words_per_page = page_size * num_kv_heads * residual_words_per_token;
-            let payload_words_per_page =
-                2 * page_size * words_per_token + residual_words_per_page;
+            let payload_words_per_page = 2 * page_size * words_per_token + residual_words_per_page;
 
             GpuPagedKvQuantizedStorage {
                 config,
@@ -598,8 +590,9 @@ pub fn paged_attention_scores_kernel(
                 let residual_scale_base = meta_base + 4u32 * kv_dim + offset_in_page * num_kv_heads;
                 let payload_base = page_id * payload_words_per_page;
                 let key_payload_base = payload_base + offset_in_page * words_per_token;
-                let residual_payload_base =
-                    payload_base + 2u32 * page_size * words_per_token + offset_in_page * num_kv_heads * residual_words_per_token;
+                let residual_payload_base = payload_base
+                    + 2u32 * page_size * words_per_token
+                    + offset_in_page * num_kv_heads * residual_words_per_token;
                 for dim in 0..head_dim {
                     let channel = kv_head * head_dim + dim;
                     let word_idx = key_payload_base + channel / 4u32;
@@ -616,8 +609,9 @@ pub fn paged_attention_scores_kernel(
                     let mut correction = 0.0f32;
                     let residual_scale = page_data[residual_scale_idx];
                     for sketch in 0..KV_QJL_SKETCH_DIM {
-                        let word_idx =
-                            residual_payload_base + kv_head * residual_words_per_token + sketch / 32u32;
+                        let word_idx = residual_payload_base
+                            + kv_head * residual_words_per_token
+                            + sketch / 32u32;
                         let bit = (quant_payload[word_idx] >> (sketch % 32u32)) & 1u32;
                         let mut sketch_sign = 1.0f32;
                         if bit == 0u32 {
@@ -690,7 +684,8 @@ pub fn paged_attention_contract_kernel(
                     let word_idx = quant_base + channel / 4u32;
                     let shift = (channel % 4u32) * 8u32;
                     let quant = ((quant_payload[word_idx] >> shift) & 0xFFu32) as f32;
-                    let dequant = page_data[value_zero_base + dim] + page_data[value_scale_base + dim] * quant;
+                    let dequant = page_data[value_zero_base + dim]
+                        + page_data[value_scale_base + dim] * quant;
                     sum += scores[pos] * dequant;
                 } else {
                     let page_base = page_id * page_stride;
