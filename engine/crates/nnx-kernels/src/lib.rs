@@ -21,10 +21,10 @@
 
 pub mod activations;
 pub mod attention;
-pub mod cpu_backend;
 pub mod audio;
 pub mod comparison;
 pub mod conv;
+pub mod cpu_backend;
 pub mod einsum;
 pub mod elementwise;
 pub mod masking;

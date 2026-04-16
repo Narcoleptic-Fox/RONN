@@ -10,7 +10,7 @@ use nnx_serving::block_manager::BlockAllocator;
 use nnx_serving::config::ServingConfig;
 use nnx_serving::page::PageId;
 use nnx_serving::paged_cache::{PagedLayerView, SequencePageTable};
-use nnx_serving::prefix_cache::{compute_hash_chain, PageHash, PrefixCache};
+use nnx_serving::prefix_cache::{PageHash, PrefixCache, compute_hash_chain};
 use nnx_serving::scheduler::Scheduler;
 use nnx_serving::sequence::{FinishReason, Sequence, SequenceId, SequenceState};
 use nnx_transformer::block::BlockWeights;
@@ -58,29 +58,75 @@ fn tiny_model(num_layers: usize) -> Model {
     let layer = |s: usize| BlockWeights {
         attn_norm: vec![1.0; hd],
         ffn_norm: vec![1.0; hd],
-        wq: Matrix::dense((0..q_dim * hd).map(|i| ((i + s) % 7) as f32 * 0.02 - 0.06).collect(), q_dim, hd),
-        wk: Matrix::dense((0..kv_dim * hd).map(|i| ((i + s) % 11) as f32 * 0.02 - 0.1).collect(), kv_dim, hd),
-        wv: Matrix::dense((0..kv_dim * hd).map(|i| ((i + s) % 13) as f32 * 0.02 - 0.12).collect(), kv_dim, hd),
-        wo: Matrix::dense((0..hd * q_dim).map(|i| ((i + s) % 5) as f32 * 0.02 - 0.04).collect(), hd, q_dim),
+        wq: Matrix::dense(
+            (0..q_dim * hd)
+                .map(|i| ((i + s) % 7) as f32 * 0.02 - 0.06)
+                .collect(),
+            q_dim,
+            hd,
+        ),
+        wk: Matrix::dense(
+            (0..kv_dim * hd)
+                .map(|i| ((i + s) % 11) as f32 * 0.02 - 0.1)
+                .collect(),
+            kv_dim,
+            hd,
+        ),
+        wv: Matrix::dense(
+            (0..kv_dim * hd)
+                .map(|i| ((i + s) % 13) as f32 * 0.02 - 0.12)
+                .collect(),
+            kv_dim,
+            hd,
+        ),
+        wo: Matrix::dense(
+            (0..hd * q_dim)
+                .map(|i| ((i + s) % 5) as f32 * 0.02 - 0.04)
+                .collect(),
+            hd,
+            q_dim,
+        ),
         w_gate: Matrix::dense(vec![0.01; inter * hd], inter, hd),
         w_up: Matrix::dense(vec![0.01; inter * hd], inter, hd),
         w_down: Matrix::dense(vec![0.01; hd * inter], hd, inter),
-        bq: None, bk: None, bv: None, bo: None,
-        attn_norm_bias: None, ffn_norm_bias: None,
+        bq: None,
+        bk: None,
+        bv: None,
+        bo: None,
+        attn_norm_bias: None,
+        ffn_norm_bias: None,
     };
 
     let weights = ModelWeights {
-        token_embedding: Matrix::dense((0..vocab * hd).map(|i| (i % 19) as f32 * 0.05 - 0.45).collect(), vocab, hd),
+        token_embedding: Matrix::dense(
+            (0..vocab * hd)
+                .map(|i| (i % 19) as f32 * 0.05 - 0.45)
+                .collect(),
+            vocab,
+            hd,
+        ),
+        position_embedding: None,
         layers: (0..num_layers).map(|i| layer(i * 17)).collect(),
         final_norm: vec![1.0; hd],
         final_norm_bias: None,
-        lm_head: Matrix::dense((0..vocab * hd).map(|i| (i % 23) as f32 * 0.03 - 0.33).collect(), vocab, hd),
+        lm_head: Matrix::dense(
+            (0..vocab * hd)
+                .map(|i| (i % 23) as f32 * 0.03 - 0.33)
+                .collect(),
+            vocab,
+            hd,
+        ),
     };
 
     Model::new(cfg, weights)
 }
 
-fn serving_config(page_size: usize, max_pages: usize, max_seq: usize, prefix_cache: bool) -> ServingConfig {
+fn serving_config(
+    page_size: usize,
+    max_pages: usize,
+    max_seq: usize,
+    prefix_cache: bool,
+) -> ServingConfig {
     ServingConfig {
         page_size,
         max_pages,
@@ -93,14 +139,24 @@ fn serving_config(page_size: usize, max_pages: usize, max_seq: usize, prefix_cac
 }
 
 fn argmax(logits: &[f32]) -> u32 {
-    logits.iter().enumerate().max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap().0 as u32
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .unwrap()
+        .0 as u32
 }
 
 /// Drive engine to completion, returning all generated token IDs per sequence.
-fn drive_to_completion(engine: &mut ServingEngine, max_iters: usize) -> Vec<(nnx_serving::sequence::SequenceId, FinishReason)> {
+fn drive_to_completion(
+    engine: &mut ServingEngine,
+    max_iters: usize,
+) -> Vec<(nnx_serving::sequence::SequenceId, FinishReason)> {
     let mut finished = Vec::new();
     for _ in 0..max_iters {
-        if !engine.has_work() { break; }
+        if !engine.has_work() {
+            break;
+        }
         let out = engine.step().unwrap();
         for s in &out.outputs {
             let tok = argmax(&s.logits);
@@ -462,7 +518,10 @@ fn prefix_cache_chain_dependency_prevents_false_sharing() {
 
     // Prompt B: [5,6,7,8, 9,10,11,12] — same second page tokens, different first.
     let result = cache.lookup(&[5, 6, 7, 8, 9, 10, 11, 12], page_size);
-    assert_eq!(result.cached_tokens, 0, "different first page should break the chain");
+    assert_eq!(
+        result.cached_tokens, 0,
+        "different first page should break the chain"
+    );
 }
 
 #[test]
@@ -610,7 +669,10 @@ fn engine_cancel_during_prefill_frees_pages() {
     engine.cancel_request(id).unwrap();
 
     let free_after = engine.allocator_stats().free_pages;
-    assert_eq!(free_before, free_after, "cancel during prefill should free pages");
+    assert_eq!(
+        free_before, free_after,
+        "cancel during prefill should free pages"
+    );
 }
 
 #[test]
@@ -649,7 +711,11 @@ fn engine_prefix_cache_fully_cached_prompt_no_panic() {
     let id2 = engine.add_request(prompt, 1);
     // This should NOT panic.
     let out = engine.step().unwrap();
-    assert_eq!(out.outputs.len(), 1, "fully-cached prompt should produce output");
+    assert_eq!(
+        out.outputs.len(),
+        1,
+        "fully-cached prompt should produce output"
+    );
     assert!(out.outputs[0].logits.iter().all(|v| v.is_finite()));
 
     // Drive to completion.
@@ -708,7 +774,9 @@ fn engine_deterministic_across_runs() {
         assert!(
             (a - b).abs() < 1e-10,
             "non-determinism at logit {}: {} vs {}",
-            i, a, b,
+            i,
+            a,
+            b,
         );
     }
 }

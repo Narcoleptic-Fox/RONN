@@ -33,9 +33,7 @@ pub enum SequenceState {
     /// Actively generating tokens (decode phase).
     Decoding,
     /// Generation complete.
-    Finished {
-        reason: FinishReason,
-    },
+    Finished { reason: FinishReason },
     /// Preempted: pages have been reclaimed, sequence must be re-prefilled.
     Preempted,
 }
@@ -112,7 +110,10 @@ impl Sequence {
 
     /// Transition to prefilling state (or straight to decoding if fully cached).
     pub fn start_prefill(&mut self) {
-        let remaining = self.prompt_tokens.len().saturating_sub(self.prefilled_tokens);
+        let remaining = self
+            .prompt_tokens
+            .len()
+            .saturating_sub(self.prefilled_tokens);
         if remaining == 0 {
             // Entire prompt was satisfied by prefix cache — skip prefill.
             self.state = SequenceState::Decoding;
@@ -126,7 +127,10 @@ impl Sequence {
     /// Record that `n` tokens were prefilled in this iteration.
     pub fn advance_prefill(&mut self, n: usize) {
         self.prefilled_tokens += n;
-        let remaining = self.prompt_tokens.len().saturating_sub(self.prefilled_tokens);
+        let remaining = self
+            .prompt_tokens
+            .len()
+            .saturating_sub(self.prefilled_tokens);
         if remaining == 0 {
             self.state = SequenceState::Decoding;
         } else {

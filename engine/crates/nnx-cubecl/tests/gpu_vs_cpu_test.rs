@@ -50,7 +50,7 @@ fn test_config() -> GpuConfig {
 /// `nnx-serving` and the old `gpu_vs_cpu_test.rs`.
 fn test_layer(seed: usize) -> RawLayerWeights {
     let hd = 16usize;
-    let q_dim = 4 * 4;  // num_heads * head_dim
+    let q_dim = 4 * 4; // num_heads * head_dim
     let kv_dim = 2 * 4; // num_kv_heads * head_dim
     let ffn = 32usize;
 
@@ -232,7 +232,10 @@ fn gpu_multi_layer_forward_is_consistent() {
 
     let run = || {
         let mut cache = gpu.new_cache();
-        tokens.iter().map(|&t| gpu.forward_token(&mut cache, t)).collect::<Vec<_>>()
+        tokens
+            .iter()
+            .map(|&t| gpu.forward_token(&mut cache, t))
+            .collect::<Vec<_>>()
     };
 
     let run_a = run();
@@ -265,8 +268,5 @@ fn gpu_from_raw_weights_rejects_wrong_layer_count() {
         vec![test_layer(0)], // only 1 layer
     );
 
-    assert!(
-        result.is_err(),
-        "should reject mismatched layer count"
-    );
+    assert!(result.is_err(), "should reject mismatched layer count");
 }

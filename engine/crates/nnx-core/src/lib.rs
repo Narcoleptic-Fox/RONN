@@ -21,8 +21,6 @@ pub use engine::{
     RequestHandle, TokenBatch,
 };
 pub use error::{EngineError, Result};
-pub use gpu_config::{
-    GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding, PageId,
-};
+pub use gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding, PageId};
 pub use shape::Shape;
 pub use tensor::{Tensor, TensorView};

@@ -235,15 +235,9 @@ const PHI_LAYER: &[NameEntry] = &[
         "model.layers.{i}.self_attn.v_proj.bias",
         "blk.{i}.attn_v.bias",
     ),
-    NameEntry::new(
-        "model.layers.{i}.mlp.fc1.weight",
-        "blk.{i}.ffn_gate.weight",
-    ),
+    NameEntry::new("model.layers.{i}.mlp.fc1.weight", "blk.{i}.ffn_gate.weight"),
     NameEntry::new("model.layers.{i}.mlp.fc1.bias", "blk.{i}.ffn_gate.bias"),
-    NameEntry::new(
-        "model.layers.{i}.mlp.fc2.weight",
-        "blk.{i}.ffn_down.weight",
-    ),
+    NameEntry::new("model.layers.{i}.mlp.fc2.weight", "blk.{i}.ffn_down.weight"),
     NameEntry::new("model.layers.{i}.mlp.fc2.bias", "blk.{i}.ffn_down.bias"),
     NameEntry::new(
         "model.layers.{i}.input_layernorm.weight",
@@ -280,27 +274,15 @@ const GPT2_LAYER: &[NameEntry] = &[
         "transformer.h.{i}.mlp.c_fc.weight",
         "blk.{i}.ffn_gate.weight",
     ),
-    NameEntry::new(
-        "transformer.h.{i}.mlp.c_fc.bias",
-        "blk.{i}.ffn_gate.bias",
-    ),
+    NameEntry::new("transformer.h.{i}.mlp.c_fc.bias", "blk.{i}.ffn_gate.bias"),
     NameEntry::new(
         "transformer.h.{i}.mlp.c_proj.weight",
         "blk.{i}.ffn_down.weight",
     ),
-    NameEntry::new(
-        "transformer.h.{i}.mlp.c_proj.bias",
-        "blk.{i}.ffn_down.bias",
-    ),
-    NameEntry::new(
-        "transformer.h.{i}.ln_1.weight",
-        "blk.{i}.attn_norm.weight",
-    ),
+    NameEntry::new("transformer.h.{i}.mlp.c_proj.bias", "blk.{i}.ffn_down.bias"),
+    NameEntry::new("transformer.h.{i}.ln_1.weight", "blk.{i}.attn_norm.weight"),
     NameEntry::new("transformer.h.{i}.ln_1.bias", "blk.{i}.attn_norm.bias"),
-    NameEntry::new(
-        "transformer.h.{i}.ln_2.weight",
-        "blk.{i}.ffn_norm.weight",
-    ),
+    NameEntry::new("transformer.h.{i}.ln_2.weight", "blk.{i}.ffn_norm.weight"),
     NameEntry::new("transformer.h.{i}.ln_2.bias", "blk.{i}.ffn_norm.bias"),
 ];
 
@@ -560,7 +542,9 @@ fn match_layer_pattern(entry: &NameEntry, hf_name: &str) -> Option<(usize, Strin
 pub fn extract_layer_index(pattern: &str, name: &str) -> Option<usize> {
     let (prefix, suffix) = pattern.split_once("{i}")?;
     let rest = name.strip_prefix(prefix)?;
-    let digits_end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let digits_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
     if digits_end == 0 {
         return None;
     }
@@ -593,10 +577,7 @@ pub fn load_shard_index(model_path: &Path) -> Result<Option<ShardIndex>, String>
     let dir = if model_path.is_dir() {
         model_path.to_path_buf()
     } else {
-        model_path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .to_path_buf()
+        model_path.parent().unwrap_or(Path::new(".")).to_path_buf()
     };
 
     let index_path = dir.join("model.safetensors.index.json");
@@ -613,12 +594,7 @@ pub fn load_shard_index(model_path: &Path) -> Result<Option<ShardIndex>, String>
     let weight_map = value
         .get("weight_map")
         .and_then(|v| v.as_object())
-        .ok_or_else(|| {
-            format!(
-                "{}: missing or invalid 'weight_map'",
-                index_path.display()
-            )
-        })?;
+        .ok_or_else(|| format!("{}: missing or invalid 'weight_map'", index_path.display()))?;
 
     let mut tensor_to_file: HashMap<String, PathBuf> = HashMap::new();
     let mut seen_files: Vec<PathBuf> = Vec::new();
@@ -784,15 +760,24 @@ mod tests {
     #[test]
     fn test_extract_layer_index_basic() {
         assert_eq!(
-            extract_layer_index("model.layers.{i}.self_attn.q_proj.weight", "model.layers.3.self_attn.q_proj.weight"),
+            extract_layer_index(
+                "model.layers.{i}.self_attn.q_proj.weight",
+                "model.layers.3.self_attn.q_proj.weight"
+            ),
             Some(3)
         );
         assert_eq!(
-            extract_layer_index("model.layers.{i}.self_attn.q_proj.weight", "model.layers.0.self_attn.q_proj.weight"),
+            extract_layer_index(
+                "model.layers.{i}.self_attn.q_proj.weight",
+                "model.layers.0.self_attn.q_proj.weight"
+            ),
             Some(0)
         );
         assert_eq!(
-            extract_layer_index("model.layers.{i}.self_attn.q_proj.weight", "model.layers.31.self_attn.q_proj.weight"),
+            extract_layer_index(
+                "model.layers.{i}.self_attn.q_proj.weight",
+                "model.layers.31.self_attn.q_proj.weight"
+            ),
             Some(31)
         );
     }
@@ -800,16 +785,25 @@ mod tests {
     #[test]
     fn test_extract_layer_index_no_match() {
         assert_eq!(
-            extract_layer_index("model.layers.{i}.self_attn.q_proj.weight", "model.norm.weight"),
+            extract_layer_index(
+                "model.layers.{i}.self_attn.q_proj.weight",
+                "model.norm.weight"
+            ),
             None
         );
         assert_eq!(
-            extract_layer_index("model.layers.{i}.self_attn.q_proj.weight", "model.layers.abc.self_attn.q_proj.weight"),
+            extract_layer_index(
+                "model.layers.{i}.self_attn.q_proj.weight",
+                "model.layers.abc.self_attn.q_proj.weight"
+            ),
             None
         );
         // suffix mismatch
         assert_eq!(
-            extract_layer_index("model.layers.{i}.self_attn.q_proj.weight", "model.layers.0.self_attn.k_proj.weight"),
+            extract_layer_index(
+                "model.layers.{i}.self_attn.q_proj.weight",
+                "model.layers.0.self_attn.k_proj.weight"
+            ),
             None
         );
     }
@@ -817,11 +811,17 @@ mod tests {
     #[test]
     fn test_extract_layer_index_gpt2_pattern() {
         assert_eq!(
-            extract_layer_index("transformer.h.{i}.attn.c_attn.weight", "transformer.h.0.attn.c_attn.weight"),
+            extract_layer_index(
+                "transformer.h.{i}.attn.c_attn.weight",
+                "transformer.h.0.attn.c_attn.weight"
+            ),
             Some(0)
         );
         assert_eq!(
-            extract_layer_index("transformer.h.{i}.attn.c_attn.weight", "transformer.h.11.attn.c_attn.weight"),
+            extract_layer_index(
+                "transformer.h.{i}.attn.c_attn.weight",
+                "transformer.h.11.attn.c_attn.weight"
+            ),
             Some(11)
         );
     }
@@ -842,10 +842,7 @@ mod tests {
             map.resolve_global("output_norm.weight"),
             Some("model.norm.weight")
         );
-        assert_eq!(
-            map.resolve_global("output.weight"),
-            Some("lm_head.weight")
-        );
+        assert_eq!(map.resolve_global("output.weight"), Some("lm_head.weight"));
     }
 
     #[test]
@@ -853,16 +850,10 @@ mod tests {
         let map = WeightNameMap::from_architecture(Architecture::Llama);
 
         let result = map.parse_hf_name("model.layers.5.self_attn.q_proj.weight");
-        assert_eq!(
-            result,
-            Some(("blk.5.attn_q.weight".to_string(), Some(5)))
-        );
+        assert_eq!(result, Some(("blk.5.attn_q.weight".to_string(), Some(5))));
 
         let result = map.parse_hf_name("model.layers.0.mlp.gate_proj.weight");
-        assert_eq!(
-            result,
-            Some(("blk.0.ffn_gate.weight".to_string(), Some(0)))
-        );
+        assert_eq!(result, Some(("blk.0.ffn_gate.weight".to_string(), Some(0))));
 
         let result = map.parse_hf_name("model.layers.2.input_layernorm.weight");
         assert_eq!(
@@ -876,22 +867,19 @@ mod tests {
         let map = WeightNameMap::from_architecture(Architecture::Llama);
 
         let result = map.parse_hf_name("model.embed_tokens.weight");
-        assert_eq!(
-            result,
-            Some(("token_embd.weight".to_string(), None))
-        );
+        assert_eq!(result, Some(("token_embd.weight".to_string(), None)));
 
         let result = map.parse_hf_name("lm_head.weight");
-        assert_eq!(
-            result,
-            Some(("output.weight".to_string(), None))
-        );
+        assert_eq!(result, Some(("output.weight".to_string(), None)));
     }
 
     #[test]
     fn test_llama_unknown_name_returns_none() {
         let map = WeightNameMap::from_architecture(Architecture::Llama);
-        assert!(map.parse_hf_name("some.completely.unknown.tensor").is_none());
+        assert!(
+            map.parse_hf_name("some.completely.unknown.tensor")
+                .is_none()
+        );
     }
 
     // -------------------------------------------------------------------
@@ -1076,36 +1064,69 @@ mod tests {
 
     #[test]
     fn test_map_hf_architecture_llama_variants() {
-        assert_eq!(map_hf_architecture("LlamaForCausalLM"), Some(Architecture::Llama));
-        assert_eq!(map_hf_architecture("MistralForCausalLM"), Some(Architecture::Mistral));
-        assert_eq!(map_hf_architecture("CodeLlamaForCausalLM"), Some(Architecture::CodeLlama));
+        assert_eq!(
+            map_hf_architecture("LlamaForCausalLM"),
+            Some(Architecture::Llama)
+        );
+        assert_eq!(
+            map_hf_architecture("MistralForCausalLM"),
+            Some(Architecture::Mistral)
+        );
+        assert_eq!(
+            map_hf_architecture("CodeLlamaForCausalLM"),
+            Some(Architecture::CodeLlama)
+        );
         assert_eq!(map_hf_architecture("llama"), Some(Architecture::Llama));
         assert_eq!(map_hf_architecture("mistral"), Some(Architecture::Mistral));
     }
 
     #[test]
     fn test_map_hf_architecture_gemma() {
-        assert_eq!(map_hf_architecture("GemmaForCausalLM"), Some(Architecture::Gemma));
-        assert_eq!(map_hf_architecture("Gemma2ForCausalLM"), Some(Architecture::Gemma));
+        assert_eq!(
+            map_hf_architecture("GemmaForCausalLM"),
+            Some(Architecture::Gemma)
+        );
+        assert_eq!(
+            map_hf_architecture("Gemma2ForCausalLM"),
+            Some(Architecture::Gemma)
+        );
     }
 
     #[test]
     fn test_map_hf_architecture_qwen() {
-        assert_eq!(map_hf_architecture("Qwen2ForCausalLM"), Some(Architecture::Qwen));
-        assert_eq!(map_hf_architecture("QwenForCausalLM"), Some(Architecture::Qwen));
+        assert_eq!(
+            map_hf_architecture("Qwen2ForCausalLM"),
+            Some(Architecture::Qwen)
+        );
+        assert_eq!(
+            map_hf_architecture("QwenForCausalLM"),
+            Some(Architecture::Qwen)
+        );
     }
 
     #[test]
     fn test_map_hf_architecture_phi() {
-        assert_eq!(map_hf_architecture("PhiForCausalLM"), Some(Architecture::Phi));
-        assert_eq!(map_hf_architecture("Phi3ForCausalLM"), Some(Architecture::Phi));
+        assert_eq!(
+            map_hf_architecture("PhiForCausalLM"),
+            Some(Architecture::Phi)
+        );
+        assert_eq!(
+            map_hf_architecture("Phi3ForCausalLM"),
+            Some(Architecture::Phi)
+        );
     }
 
     #[test]
     fn test_map_hf_architecture_gpt2() {
-        assert_eq!(map_hf_architecture("GPT2LMHeadModel"), Some(Architecture::GPT2));
+        assert_eq!(
+            map_hf_architecture("GPT2LMHeadModel"),
+            Some(Architecture::GPT2)
+        );
         assert_eq!(map_hf_architecture("gpt2"), Some(Architecture::GPT2));
-        assert_eq!(map_hf_architecture("GPTJForCausalLM"), Some(Architecture::GPT2));
+        assert_eq!(
+            map_hf_architecture("GPTJForCausalLM"),
+            Some(Architecture::GPT2)
+        );
     }
 
     // -------------------------------------------------------------------
@@ -1146,7 +1167,8 @@ mod tests {
 
         let index_path = temp_dir.join("model.safetensors.index.json");
         let mut f = std::fs::File::create(&index_path).unwrap();
-        f.write_all(serde_json::to_string(&index).unwrap().as_bytes()).unwrap();
+        f.write_all(serde_json::to_string(&index).unwrap().as_bytes())
+            .unwrap();
         f.sync_all().unwrap();
 
         let result = load_shard_index(&temp_dir.join("model.safetensors"));

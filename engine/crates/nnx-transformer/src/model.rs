@@ -227,7 +227,10 @@ impl Model {
     }
 
     fn add_position_embedding(&self, hidden: &mut [f32], position: usize) -> Result<()> {
-        if !matches!(self.config.pos_encoding, crate::config::PosEncoding::Learned) {
+        if !matches!(
+            self.config.pos_encoding,
+            crate::config::PosEncoding::Learned
+        ) {
             return Ok(());
         }
 
@@ -591,7 +594,11 @@ mod tests {
             Model::new(
                 config.clone(),
                 ModelWeights {
-                    token_embedding: Matrix::dense(vec![0.0; vocab_size * hidden_dim], vocab_size, hidden_dim),
+                    token_embedding: Matrix::dense(
+                        vec![0.0; vocab_size * hidden_dim],
+                        vocab_size,
+                        hidden_dim,
+                    ),
                     position_embedding: Some(Matrix::dense(
                         [position_row0, vec![0.0; hidden_dim]].concat(),
                         2,
@@ -602,10 +609,8 @@ mod tests {
                     final_norm_bias: Some(vec![0.0; hidden_dim]),
                     lm_head: Matrix::dense(
                         vec![
-                            1.0, 0.0, 0.0, 0.0,
-                            0.0, 1.0, 0.0, 0.0,
-                            0.0, 0.0, 1.0, 0.0,
-                            0.0, 0.0, 0.0, 1.0,
+                            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0,
+                            0.0, 1.0,
                         ],
                         vocab_size,
                         hidden_dim,

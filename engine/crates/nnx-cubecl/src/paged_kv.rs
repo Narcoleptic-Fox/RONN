@@ -6,8 +6,8 @@
 //! `[token][K|V][kv_head][head_dim]`.
 
 use cubecl::prelude::*;
-use nnx_core::backend::KernelBackend;
 use nnx_core::PageId;
+use nnx_core::backend::KernelBackend;
 
 use crate::backend::{CubeclBackend, GpuBuffer};
 

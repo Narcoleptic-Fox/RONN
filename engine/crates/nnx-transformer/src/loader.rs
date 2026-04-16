@@ -11,8 +11,9 @@ use crate::config::{
     known_architecture_names,
 };
 use crate::model::{Model, ModelWeights};
-use crate::weight_names::{WeightNameMap, load_shard_index, split_fused_qkv_bias,
-    split_fused_qkv_weight};
+use crate::weight_names::{
+    WeightNameMap, load_shard_index, split_fused_qkv_bias, split_fused_qkv_weight,
+};
 use crate::weights::Matrix;
 use nnx_gguf::GGUFFile;
 use nnx_quant::GGMLType;
@@ -392,7 +393,10 @@ pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result
         }
         Ok(None) => {} // single-file model, continue below
         Err(e) => {
-            warn!("could not read shard index: {} — proceeding as single file", e);
+            warn!(
+                "could not read shard index: {} — proceeding as single file",
+                e
+            );
         }
     }
 
@@ -435,8 +439,8 @@ fn load_safetensors_sharded(
     shard_idx: &crate::weight_names::ShardIndex,
     memory_budget: usize,
 ) -> Result<Model, String> {
-    use std::collections::HashMap;
     use nnx_safetensors::SafeTensorsFile;
+    use std::collections::HashMap;
 
     // Resolve the model directory.
     let dir = if model_path.is_dir() {
@@ -626,8 +630,8 @@ fn infer_config_from_adjacent_config(
         .ok_or("missing hidden_size")?;
     // Layer count: prefer explicit field; fall back to probing via architecture-
     // specific tensor name so GPT-2 and Llama-family both count correctly.
-    let arch_enum_for_probe = crate::weight_names::map_hf_architecture(arch_name)
-        .unwrap_or(Architecture::Llama);
+    let arch_enum_for_probe =
+        crate::weight_names::map_hf_architecture(arch_name).unwrap_or(Architecture::Llama);
     let probe_map = WeightNameMap::from_architecture(arch_enum_for_probe);
     let num_layers = json_usize(&value, "num_hidden_layers")
         .or_else(|| {
@@ -810,7 +814,8 @@ fn load_safetensors_weights(
 /// use the `load_tensor` and `try_load_tensor` methods which open the correct
 /// shard for each tensor directly.
 struct ShardedTensorLoader<'a> {
-    shard_cache: &'a std::collections::HashMap<std::path::PathBuf, nnx_safetensors::SafeTensorsFile>,
+    shard_cache:
+        &'a std::collections::HashMap<std::path::PathBuf, nnx_safetensors::SafeTensorsFile>,
     shard_idx: &'a crate::weight_names::ShardIndex,
 }
 
@@ -886,14 +891,7 @@ fn load_safetensors_weights_sharded(
 
     let mut layers = Vec::with_capacity(config.num_layers);
     for i in 0..config.num_layers {
-        let layer = load_block_weights_hf(
-            loader,
-            config,
-            name_map,
-            i,
-            q_dim,
-            kv_dim,
-        )?;
+        let layer = load_block_weights_hf(loader, config, name_map, i, q_dim, kv_dim)?;
         layers.push(layer);
         if (i + 1) % 10 == 0 || i == config.num_layers - 1 {
             info!("Loaded layer {}/{}", i + 1, config.num_layers);
@@ -1013,16 +1011,26 @@ fn load_block_weights_hf(
     };
 
     // Attention norm
-    let attn_norm = src.load_tensor(&hf_name(&format!("blk.{layer}.attn_norm.weight")), config.hidden_dim)
+    let attn_norm = src
+        .load_tensor(
+            &hf_name(&format!("blk.{layer}.attn_norm.weight")),
+            config.hidden_dim,
+        )
         .or_else(|_| {
             // Some architectures use `input_layernorm` at the global naming level
             // which resolve_layer already handles; this fallback is just defensive.
-            src.load_tensor(&format!("model.layers.{layer}.input_layernorm.weight"), config.hidden_dim)
+            src.load_tensor(
+                &format!("model.layers.{layer}.input_layernorm.weight"),
+                config.hidden_dim,
+            )
         })?;
 
     // FFN norm (may default to ones for RMSNorm-only arches that don't store it)
     let ffn_norm = src
-        .try_load_tensor(&hf_name(&format!("blk.{layer}.ffn_norm.weight")), config.hidden_dim)
+        .try_load_tensor(
+            &hf_name(&format!("blk.{layer}.ffn_norm.weight")),
+            config.hidden_dim,
+        )
         .or_else(|| {
             src.try_load_tensor(
                 &format!("model.layers.{layer}.post_attention_layernorm.weight"),
@@ -1033,12 +1041,18 @@ fn load_block_weights_hf(
 
     // Norm biases (LayerNorm only)
     let attn_norm_bias = if matches!(config.norm_type, NormType::LayerNorm) {
-        src.try_load_tensor(&hf_name(&format!("blk.{layer}.attn_norm.bias")), config.hidden_dim)
+        src.try_load_tensor(
+            &hf_name(&format!("blk.{layer}.attn_norm.bias")),
+            config.hidden_dim,
+        )
     } else {
         None
     };
     let ffn_norm_bias = if matches!(config.norm_type, NormType::LayerNorm) {
-        src.try_load_tensor(&hf_name(&format!("blk.{layer}.ffn_norm.bias")), config.hidden_dim)
+        src.try_load_tensor(
+            &hf_name(&format!("blk.{layer}.ffn_norm.bias")),
+            config.hidden_dim,
+        )
     } else {
         None
     };
@@ -1094,8 +1108,17 @@ fn load_split_qkv(
     layer: usize,
     q_dim: usize,
     kv_dim: usize,
-) -> Result<(Matrix, Matrix, Matrix, Option<Vec<f32>>, Option<Vec<f32>>, Option<Vec<f32>>), String>
-{
+) -> Result<
+    (
+        Matrix,
+        Matrix,
+        Matrix,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+    ),
+    String,
+> {
     let wq_name = hf_name(&format!("blk.{layer}.attn_q.weight"));
     let wq = Matrix::dense(
         src.load_tensor(&wq_name, q_dim * config.hidden_dim)?,
@@ -1137,11 +1160,20 @@ fn load_fused_qkv(
     layer: usize,
     q_dim: usize,
     kv_dim: usize,
-) -> Result<(Matrix, Matrix, Matrix, Option<Vec<f32>>, Option<Vec<f32>>, Option<Vec<f32>>), String>
-{
-    let fused_weight_name = name_map
-        .fused_qkv_weight_name(layer)
-        .ok_or_else(|| format!("architecture claims fused QKV but no weight pattern at layer {layer}"))?;
+) -> Result<
+    (
+        Matrix,
+        Matrix,
+        Matrix,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+    ),
+    String,
+> {
+    let fused_weight_name = name_map.fused_qkv_weight_name(layer).ok_or_else(|| {
+        format!("architecture claims fused QKV but no weight pattern at layer {layer}")
+    })?;
 
     let fused_numel = (q_dim + kv_dim + kv_dim) * config.hidden_dim;
     let fused = src.load_tensor(&fused_weight_name, fused_numel)?;
@@ -1214,10 +1246,7 @@ fn load_ffn_weights_hf(
 ///
 /// Some architectures specify QKV bias in their profile but individual checkpoints
 /// omit them. Probing layer 0 avoids hard errors when loading bias-less models.
-fn probe_qkv_bias(
-    st: &nnx_safetensors::SafeTensorsFile,
-    name_map: &WeightNameMap,
-) -> bool {
+fn probe_qkv_bias(st: &nnx_safetensors::SafeTensorsFile, name_map: &WeightNameMap) -> bool {
     // Try architecture-specific layer-0 Q bias name; fall back to Llama HF convention.
     let layer0_q_bias = name_map
         .resolve_layer("attn_q.bias", 0)
@@ -1226,10 +1255,7 @@ fn probe_qkv_bias(
 }
 
 /// Check whether the checkpoint actually contains output projection bias tensors.
-fn probe_output_bias(
-    st: &nnx_safetensors::SafeTensorsFile,
-    name_map: &WeightNameMap,
-) -> bool {
+fn probe_output_bias(st: &nnx_safetensors::SafeTensorsFile, name_map: &WeightNameMap) -> bool {
     let layer0_o_bias = name_map
         .resolve_layer("attn_output.bias", 0)
         .unwrap_or_else(|| "model.layers.0.self_attn.o_proj.bias".to_string());
@@ -1562,7 +1588,6 @@ fn estimate_matrix_storage_multi_name_bytes(
     }
     0
 }
-
 
 fn json_usize(value: &serde_json::Value, key: &str) -> Option<usize> {
     value.get(key).and_then(|v| v.as_u64()).map(|v| v as usize)

@@ -28,12 +28,23 @@ fn download(client: &ComputeClient<Server>, handle: &cubecl::server::Handle) -> 
 }
 
 fn assert_close(a: &[f32], b: &[f32], tol: f32, msg: &str) {
-    assert_eq!(a.len(), b.len(), "{}: length mismatch {} vs {}", msg, a.len(), b.len());
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{}: length mismatch {} vs {}",
+        msg,
+        a.len(),
+        b.len()
+    );
     for (i, (av, bv)) in a.iter().zip(b.iter()).enumerate() {
         assert!(
             (av - bv).abs() < tol,
             "{}: mismatch at [{}]: gpu={}, cpu={}, diff={}",
-            msg, i, av, bv, (av - bv).abs(),
+            msg,
+            i,
+            av,
+            bv,
+            (av - bv).abs(),
         );
     }
 }
@@ -46,7 +57,10 @@ fn cpu_rms_norm(x: &[f32], weight: &[f32], eps: f32) -> Vec<f32> {
     let n = x.len();
     let sum_sq: f32 = x.iter().map(|v| v * v).sum();
     let rms = (sum_sq / n as f32 + eps).sqrt();
-    x.iter().zip(weight.iter()).map(|(v, w)| (v / rms) * w).collect()
+    x.iter()
+        .zip(weight.iter())
+        .map(|(v, w)| (v / rms) * w)
+        .collect()
 }
 
 fn cpu_softmax(x: &[f32]) -> Vec<f32> {
@@ -182,7 +196,11 @@ fn test_fused_swiglu() {
     let n = gate.len();
 
     let gate_silu = cpu_silu(&gate);
-    let expected: Vec<f32> = gate_silu.iter().zip(up.iter()).map(|(g, u)| g * u).collect();
+    let expected: Vec<f32> = gate_silu
+        .iter()
+        .zip(up.iter())
+        .map(|(g, u)| g * u)
+        .collect();
 
     let gate_gpu = upload(&client, &gate);
     let up_gpu = upload(&client, &up);
@@ -289,7 +307,11 @@ fn test_softmax() {
     assert_close(&result, &expected, 1e-5, "softmax");
 
     let sum: f32 = result.iter().sum();
-    assert!((sum - 1.0).abs() < 1e-5, "softmax sum={}, expected 1.0", sum);
+    assert!(
+        (sum - 1.0).abs() < 1e-5,
+        "softmax sum={}, expected 1.0",
+        sum
+    );
 }
 
 #[test]

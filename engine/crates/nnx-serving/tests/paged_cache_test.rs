@@ -22,10 +22,18 @@ fn cross_validate_store_read(
 
     // Generate deterministic test data.
     let keys: Vec<Vec<f32>> = (0..num_tokens)
-        .map(|t| (0..kv_dim).map(|d| ((t * kv_dim + d) as f32) * 0.01 + 0.5).collect())
+        .map(|t| {
+            (0..kv_dim)
+                .map(|d| ((t * kv_dim + d) as f32) * 0.01 + 0.5)
+                .collect()
+        })
         .collect();
     let vals: Vec<Vec<f32>> = (0..num_tokens)
-        .map(|t| (0..kv_dim).map(|d| ((t * kv_dim + d) as f32) * -0.01 + 0.3).collect())
+        .map(|t| {
+            (0..kv_dim)
+                .map(|d| ((t * kv_dim + d) as f32) * -0.01 + 0.3)
+                .collect()
+        })
         .collect();
 
     // --- Contiguous path ---
@@ -53,11 +61,7 @@ fn cross_validate_store_read(
             paged.store(&keys[t], &vals[t]).unwrap();
         }
 
-        assert_eq!(
-            contiguous.len(),
-            paged.len(),
-            "token count mismatch"
-        );
+        assert_eq!(contiguous.len(), paged.len(), "token count mismatch");
 
         // Compare every position and head — must be bit-for-bit identical.
         for t in 0..num_tokens {
@@ -145,19 +149,11 @@ fn run_contiguous_decode(
     weights: &nnx_transformer::block::BlockWeights,
     config: &nnx_transformer::config::ModelConfig,
 ) -> Vec<Vec<f32>> {
-    let mut cache = LayerCache::new(
-        hidden_seq.len() + 16,
-        config.num_kv_heads,
-        config.head_dim,
-    );
+    let mut cache = LayerCache::new(hidden_seq.len() + 16, config.num_kv_heads, config.head_dim);
     let mut outputs = Vec::new();
     for (pos, hidden) in hidden_seq.iter().enumerate() {
         let out = nnx_transformer::attention::attention_decode_configurable(
-            hidden,
-            weights,
-            &mut cache,
-            pos,
-            config,
+            hidden, weights, &mut cache, pos, config,
         )
         .unwrap();
         outputs.push(out);
@@ -173,7 +169,8 @@ fn run_paged_decode(
     page_size: usize,
 ) -> Vec<Vec<f32>> {
     let max_pages = (hidden_seq.len() / page_size + 2) * 2;
-    let mut allocator = BlockAllocator::new(max_pages, page_size, config.num_kv_heads, config.head_dim);
+    let mut allocator =
+        BlockAllocator::new(max_pages, page_size, config.num_kv_heads, config.head_dim);
     let mut page_table: Vec<PageId> = Vec::new();
     let mut num_tokens: usize = 0;
 
@@ -189,11 +186,7 @@ fn run_paged_decode(
             config.head_dim,
         );
         let out = nnx_transformer::attention::attention_decode_configurable(
-            hidden,
-            weights,
-            &mut view,
-            pos,
-            config,
+            hidden, weights, &mut view, pos, config,
         )
         .unwrap();
         num_tokens = view.token_count(); // read back updated count
@@ -247,24 +240,48 @@ fn make_test_weights(
         attn_norm: vec![1.0; hidden_dim],
         ffn_norm: vec![1.0; hidden_dim],
         wq: Matrix::dense(
-            (0..q_dim * hidden_dim).map(|i| ((i % 7) as f32 - 3.0) * 0.02).collect(),
-            q_dim, hidden_dim,
+            (0..q_dim * hidden_dim)
+                .map(|i| ((i % 7) as f32 - 3.0) * 0.02)
+                .collect(),
+            q_dim,
+            hidden_dim,
         ),
         wk: Matrix::dense(
-            (0..kv_dim * hidden_dim).map(|i| ((i % 11) as f32 - 5.0) * 0.02).collect(),
-            kv_dim, hidden_dim,
+            (0..kv_dim * hidden_dim)
+                .map(|i| ((i % 11) as f32 - 5.0) * 0.02)
+                .collect(),
+            kv_dim,
+            hidden_dim,
         ),
         wv: Matrix::dense(
-            (0..kv_dim * hidden_dim).map(|i| ((i % 13) as f32 - 6.0) * 0.02).collect(),
-            kv_dim, hidden_dim,
+            (0..kv_dim * hidden_dim)
+                .map(|i| ((i % 13) as f32 - 6.0) * 0.02)
+                .collect(),
+            kv_dim,
+            hidden_dim,
         ),
         wo: Matrix::dense(
-            (0..hidden_dim * q_dim).map(|i| ((i % 5) as f32 - 2.0) * 0.02).collect(),
-            hidden_dim, q_dim,
+            (0..hidden_dim * q_dim)
+                .map(|i| ((i % 5) as f32 - 2.0) * 0.02)
+                .collect(),
+            hidden_dim,
+            q_dim,
         ),
-        w_gate: Matrix::dense(vec![0.01; intermediate_dim * hidden_dim], intermediate_dim, hidden_dim),
-        w_up: Matrix::dense(vec![0.01; intermediate_dim * hidden_dim], intermediate_dim, hidden_dim),
-        w_down: Matrix::dense(vec![0.01; hidden_dim * intermediate_dim], hidden_dim, intermediate_dim),
+        w_gate: Matrix::dense(
+            vec![0.01; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        ),
+        w_up: Matrix::dense(
+            vec![0.01; intermediate_dim * hidden_dim],
+            intermediate_dim,
+            hidden_dim,
+        ),
+        w_down: Matrix::dense(
+            vec![0.01; hidden_dim * intermediate_dim],
+            hidden_dim,
+            intermediate_dim,
+        ),
         bq: None,
         bk: None,
         bv: None,
@@ -292,7 +309,10 @@ fn attention_decode_rope_paged_matches_contiguous() {
     let hidden_dim = num_heads * head_dim; // 32
 
     let config = make_test_config(
-        num_heads, num_kv_heads, head_dim, hidden_dim,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+        hidden_dim,
         nnx_transformer::config::PosEncoding::RoPE { freq_base: 10000.0 },
     );
     let weights = make_test_weights(hidden_dim, num_heads, num_kv_heads, head_dim);
@@ -302,17 +322,15 @@ fn attention_decode_rope_paged_matches_contiguous() {
     let paged_out = run_paged_decode(&hidden_seq, &weights, &config, 4);
 
     for (step, (c, p)) in contiguous_out.iter().zip(paged_out.iter()).enumerate() {
-        assert_eq!(
-            c.len(),
-            p.len(),
-            "output length mismatch at step {}",
-            step
-        );
+        assert_eq!(c.len(), p.len(), "output length mismatch at step {}", step);
         for (i, (cv, pv)) in c.iter().zip(p.iter()).enumerate() {
             assert!(
                 (cv - pv).abs() < 1e-6,
                 "output mismatch at step={}, dim={}: contiguous={}, paged={}",
-                step, i, cv, pv,
+                step,
+                i,
+                cv,
+                pv,
             );
         }
     }
@@ -326,7 +344,10 @@ fn attention_decode_no_rope_paged_matches_contiguous() {
     let hidden_dim = num_heads * head_dim;
 
     let config = make_test_config(
-        num_heads, num_kv_heads, head_dim, hidden_dim,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+        hidden_dim,
         nnx_transformer::config::PosEncoding::None,
     );
     let weights = make_test_weights(hidden_dim, num_heads, num_kv_heads, head_dim);
@@ -340,7 +361,10 @@ fn attention_decode_no_rope_paged_matches_contiguous() {
             assert!(
                 (cv - pv).abs() < 1e-6,
                 "no-rope mismatch at step={}, dim={}: contiguous={}, paged={}",
-                step, i, cv, pv,
+                step,
+                i,
+                cv,
+                pv,
             );
         }
     }
@@ -355,7 +379,10 @@ fn attention_decode_gqa_paged_matches_contiguous() {
     let hidden_dim = num_heads * head_dim; // 32
 
     let config = make_test_config(
-        num_heads, num_kv_heads, head_dim, hidden_dim,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+        hidden_dim,
         nnx_transformer::config::PosEncoding::RoPE { freq_base: 10000.0 },
     );
     let weights = make_test_weights(hidden_dim, num_heads, num_kv_heads, head_dim);
@@ -369,7 +396,10 @@ fn attention_decode_gqa_paged_matches_contiguous() {
             assert!(
                 (cv - pv).abs() < 1e-6,
                 "GQA mismatch at step={}, dim={}: contiguous={}, paged={}",
-                step, i, cv, pv,
+                step,
+                i,
+                cv,
+                pv,
             );
         }
     }
@@ -384,7 +414,10 @@ fn attention_decode_page_size_1_matches_contiguous() {
     let hidden_dim = num_heads * head_dim;
 
     let config = make_test_config(
-        num_heads, num_kv_heads, head_dim, hidden_dim,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+        hidden_dim,
         nnx_transformer::config::PosEncoding::RoPE { freq_base: 10000.0 },
     );
     let weights = make_test_weights(hidden_dim, num_heads, num_kv_heads, head_dim);
@@ -398,7 +431,10 @@ fn attention_decode_page_size_1_matches_contiguous() {
             assert!(
                 (cv - pv).abs() < 1e-6,
                 "page_size=1 mismatch at step={}, dim={}: contiguous={}, paged={}",
-                step, i, cv, pv,
+                step,
+                i,
+                cv,
+                pv,
             );
         }
     }

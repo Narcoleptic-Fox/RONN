@@ -263,8 +263,7 @@ mod tests {
         let mut page_table: Vec<PageId> = Vec::new();
 
         {
-            let mut view =
-                PagedLayerView::new(&mut allocator, &mut page_table, 0, 0, 2, 1, 2);
+            let mut view = PagedLayerView::new(&mut allocator, &mut page_table, 0, 0, 2, 1, 2);
 
             // Store 3 tokens (crosses page boundary at token 2).
             view.store(&[1.0, 2.0], &[3.0, 4.0]).unwrap();
@@ -294,8 +293,7 @@ mod tests {
         let mut page_table: Vec<PageId> = Vec::new();
 
         {
-            let mut view =
-                PagedLayerView::new(&mut allocator, &mut page_table, 0, 0, 4, 2, 4);
+            let mut view = PagedLayerView::new(&mut allocator, &mut page_table, 0, 0, 4, 2, 4);
 
             let key = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]; // 2 heads * 4 dim
             let val = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
@@ -324,7 +322,11 @@ mod tests {
             .map(|t| (0..kv_dim).map(|d| (t * kv_dim + d) as f32 * 0.1).collect())
             .collect();
         let test_vals: Vec<Vec<f32>> = (0..num_tokens_to_test)
-            .map(|t| (0..kv_dim).map(|d| (t * kv_dim + d) as f32 * -0.1).collect())
+            .map(|t| {
+                (0..kv_dim)
+                    .map(|d| (t * kv_dim + d) as f32 * -0.1)
+                    .collect()
+            })
             .collect();
 
         // Store via PagedLayerView.
@@ -431,13 +433,25 @@ mod tests {
         // Read back from each layer.
         {
             let view0 = PagedLayerView::new(
-                &mut allocator, &mut layer0_pages, 1, 0, page_size, num_kv_heads, head_dim,
+                &mut allocator,
+                &mut layer0_pages,
+                1,
+                0,
+                page_size,
+                num_kv_heads,
+                head_dim,
             );
             assert_eq!(view0.key_at(0, 0), &[1.0, 2.0]);
         }
         {
             let view1 = PagedLayerView::new(
-                &mut allocator, &mut layer1_pages, 1, 1, page_size, num_kv_heads, head_dim,
+                &mut allocator,
+                &mut layer1_pages,
+                1,
+                1,
+                page_size,
+                num_kv_heads,
+                head_dim,
             );
             assert_eq!(view1.key_at(0, 0), &[5.0, 6.0]);
         }

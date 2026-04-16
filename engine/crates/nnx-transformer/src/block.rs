@@ -4,9 +4,9 @@
 
 use crate::attention;
 use crate::config::{BlockStyle, ModelConfig, NormType};
-use nnx_core::engine::KVStore;
 use crate::ffn;
 use crate::weights::Matrix;
+use nnx_core::engine::KVStore;
 use nnx_core::error::Result;
 
 /// Weights for one transformer block.

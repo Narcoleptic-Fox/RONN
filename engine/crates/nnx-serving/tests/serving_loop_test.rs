@@ -40,9 +40,7 @@ fn make_model() -> Model {
         rms_norm_eps: 1e-5,
         norm_type: NormType::RMSNorm,
         ffn_type: FFNType::SwiGLU,
-        pos_encoding: PosEncoding::RoPE {
-            freq_base: 10000.0,
-        },
+        pos_encoding: PosEncoding::RoPE { freq_base: 10000.0 },
         block_style: BlockStyle::Sequential,
         has_qkv_bias: false,
         has_output_bias: false,
@@ -122,6 +120,7 @@ fn make_model() -> Model {
             vocab_size,
             hidden_dim,
         ),
+        position_embedding: None,
         layers,
         final_norm: vec![1.0; hidden_dim],
         final_norm_bias: None,

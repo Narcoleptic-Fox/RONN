@@ -19,12 +19,23 @@ fn gpu() -> CubeclBackend<R> {
 }
 
 fn assert_close(a: &[f32], b: &[f32], tol: f32, msg: &str) {
-    assert_eq!(a.len(), b.len(), "{}: length mismatch {} vs {}", msg, a.len(), b.len());
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{}: length mismatch {} vs {}",
+        msg,
+        a.len(),
+        b.len()
+    );
     for (i, (av, bv)) in a.iter().zip(b.iter()).enumerate() {
         assert!(
             (av - bv).abs() < tol,
             "{}: mismatch at [{}]: got={}, expected={}, diff={}",
-            msg, i, av, bv, (av - bv).abs(),
+            msg,
+            i,
+            av,
+            bv,
+            (av - bv).abs(),
         );
     }
 }
@@ -137,7 +148,11 @@ fn softmax_all_zeros() {
     let result = b.to_f32(&data);
     // Uniform distribution.
     for &v in &result {
-        assert!((v - 0.25).abs() < 1e-5, "softmax of zeros should be uniform, got {}", v);
+        assert!(
+            (v - 0.25).abs() < 1e-5,
+            "softmax of zeros should be uniform, got {}",
+            v
+        );
     }
 }
 
@@ -150,7 +165,10 @@ fn softmax_large_values() {
     let result = b.to_f32(&data);
     let sum: f32 = result.iter().sum();
     assert!((sum - 1.0).abs() < 1e-5, "softmax sum={}", sum);
-    assert!(result[2] > result[1] && result[1] > result[0], "monotonicity");
+    assert!(
+        result[2] > result[1] && result[1] > result[0],
+        "monotonicity"
+    );
 }
 
 #[test]
@@ -160,8 +178,16 @@ fn softmax_with_neg_inf() {
     let mut data = b.from_f32(&[1.0, f32::NEG_INFINITY, 2.0, f32::NEG_INFINITY]);
     b.softmax_inplace(&mut data, 0, 4);
     let result = b.to_f32(&data);
-    assert!(result[1].abs() < 1e-6, "masked position should be ~0, got {}", result[1]);
-    assert!(result[3].abs() < 1e-6, "masked position should be ~0, got {}", result[3]);
+    assert!(
+        result[1].abs() < 1e-6,
+        "masked position should be ~0, got {}",
+        result[1]
+    );
+    assert!(
+        result[3].abs() < 1e-6,
+        "masked position should be ~0, got {}",
+        result[3]
+    );
     let sum: f32 = result.iter().sum();
     assert!((sum - 1.0).abs() < 1e-5, "sum={}", sum);
 }
@@ -189,7 +215,10 @@ fn rms_norm_near_zero() {
     let mut out = b.zeros(4);
     b.rms_norm(&x, &w, &mut out, 1e-5);
     let result = b.to_f32(&out);
-    assert!(result.iter().all(|v| v.is_finite()), "near-zero should not produce NaN/Inf");
+    assert!(
+        result.iter().all(|v| v.is_finite()),
+        "near-zero should not produce NaN/Inf"
+    );
 }
 
 #[test]
@@ -243,15 +272,17 @@ fn matvec_identity() {
     let b = gpu();
     // 4x4 identity matrix
     let mat = b.from_f32(&[
-        1.0, 0.0, 0.0, 0.0,
-        0.0, 1.0, 0.0, 0.0,
-        0.0, 0.0, 1.0, 0.0,
-        0.0, 0.0, 0.0, 1.0,
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
     ]);
     let x = b.from_f32(&[1.0, 2.0, 3.0, 4.0]);
     let mut y = b.zeros(4);
     b.matvec(&mat, &x, &mut y, 4, 4);
-    assert_close(&b.to_f32(&y), &[1.0, 2.0, 3.0, 4.0], 1e-5, "identity matvec");
+    assert_close(
+        &b.to_f32(&y),
+        &[1.0, 2.0, 3.0, 4.0],
+        1e-5,
+        "identity matvec",
+    );
 }
 
 #[test]
@@ -260,7 +291,11 @@ fn dot_orthogonal_vectors() {
     let a = b.from_f32(&[1.0, 0.0, 0.0]);
     let bb_buf = b.from_f32(&[0.0, 1.0, 0.0]);
     let result = b.dot(&a, &bb_buf);
-    assert!(result.abs() < 1e-6, "orthogonal dot should be 0, got {}", result);
+    assert!(
+        result.abs() < 1e-6,
+        "orthogonal dot should be 0, got {}",
+        result
+    );
 }
 
 // ===================================================================
@@ -277,7 +312,9 @@ fn from_to_f32_preserves_special_values() {
         assert!(
             orig == got || (orig.is_nan() && got.is_nan()),
             "round-trip failed at [{}]: {} vs {}",
-            i, orig, got,
+            i,
+            orig,
+            got,
         );
     }
 }

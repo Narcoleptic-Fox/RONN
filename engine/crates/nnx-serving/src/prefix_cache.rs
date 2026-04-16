@@ -251,7 +251,10 @@ mod tests {
         let tokens = vec![1, 2, 3, 4];
         let h1 = page_content_hash(&tokens, PageHash::ROOT);
         let h2 = page_content_hash(&tokens, PageHash(42));
-        assert_ne!(h1, h2, "different parent hashes should produce different results");
+        assert_ne!(
+            h1, h2,
+            "different parent hashes should produce different results"
+        );
     }
 
     #[test]

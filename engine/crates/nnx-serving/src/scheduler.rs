@@ -83,11 +83,7 @@ impl Scheduler {
     }
 
     /// Add a new request to the waiting queue.
-    pub fn add_request(
-        &mut self,
-        prompt_tokens: Vec<u32>,
-        max_new_tokens: usize,
-    ) -> SequenceId {
+    pub fn add_request(&mut self, prompt_tokens: Vec<u32>, max_new_tokens: usize) -> SequenceId {
         let id = SequenceId(self.next_seq_id);
         self.next_seq_id += 1;
 
@@ -209,12 +205,7 @@ impl Scheduler {
     }
 
     /// Notify the scheduler that a sequence has generated a token.
-    pub fn on_token_generated(
-        &mut self,
-        id: SequenceId,
-        token_id: u32,
-        is_eos: bool,
-    ) {
+    pub fn on_token_generated(&mut self, id: SequenceId, token_id: u32, is_eos: bool) {
         if let Some(seq) = self.running.iter_mut().find(|s| s.id == id) {
             seq.append_token(token_id);
             if is_eos {
@@ -509,7 +500,11 @@ mod tests {
 
         // Step should admit and go straight to Decoding (no prefill).
         let output = sched.step(&alloc);
-        assert_eq!(output.prefill.len(), 0, "should skip prefill for fully cached prompt");
+        assert_eq!(
+            output.prefill.len(),
+            0,
+            "should skip prefill for fully cached prompt"
+        );
         assert_eq!(output.decode.len(), 1, "should go straight to decode");
         assert_eq!(output.decode[0], id);
     }

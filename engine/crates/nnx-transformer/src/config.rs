@@ -292,7 +292,12 @@ pub const STABLELM_PROFILE: ArchitectureProfile = ArchitectureProfile {
     has_embedding_scale: false,
     tied_embeddings: false,
     gguf_names: &["stablelm"],
-    hf_names: &["stablelm", "stabilityai", "stabilityailm", "stablelmforcausallm"],
+    hf_names: &[
+        "stablelm",
+        "stabilityai",
+        "stabilityailm",
+        "stablelmforcausallm",
+    ],
 };
 
 /// Falcon: LayerNorm, GELU, full RoPE, sequential, no QKV/output bias.
@@ -619,16 +624,17 @@ impl ModelConfig {
         };
 
         let pos_encoding = match &self.pos_encoding {
-            PosEncoding::RoPE { freq_base } => {
-                GpuPosEncoding::RoPE { freq_base: *freq_base }
-            }
+            PosEncoding::RoPE { freq_base } => GpuPosEncoding::RoPE {
+                freq_base: *freq_base,
+            },
             PosEncoding::Learned => GpuPosEncoding::Learned,
-            PosEncoding::PartialRoPE { freq_base, rotary_dim } => {
-                GpuPosEncoding::PartialRoPE {
-                    freq_base: *freq_base,
-                    rotary_dim: *rotary_dim,
-                }
-            }
+            PosEncoding::PartialRoPE {
+                freq_base,
+                rotary_dim,
+            } => GpuPosEncoding::PartialRoPE {
+                freq_base: *freq_base,
+                rotary_dim: *rotary_dim,
+            },
             PosEncoding::None => GpuPosEncoding::None,
         };
 
@@ -821,9 +827,9 @@ mod tests {
                     None
                 },
             };
-            config
-                .validate_support()
-                .unwrap_or_else(|e| panic!("profile '{}' failed validate_support: {}", profile.name, e));
+            config.validate_support().unwrap_or_else(|e| {
+                panic!("profile '{}' failed validate_support: {}", profile.name, e)
+            });
         }
     }
 
@@ -1010,7 +1016,9 @@ mod tests {
     #[test]
     fn build_pos_encoding_rope() {
         let enc = build_pos_encoding(PosEncodingKind::RoPE, 10000.0, 64);
-        assert!(matches!(enc, PosEncoding::RoPE { freq_base } if (freq_base - 10000.0).abs() < 1e-6));
+        assert!(
+            matches!(enc, PosEncoding::RoPE { freq_base } if (freq_base - 10000.0).abs() < 1e-6)
+        );
     }
 
     #[test]

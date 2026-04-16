@@ -53,12 +53,7 @@ impl BlockAllocator {
     /// Create a new allocator with a fixed number of pages.
     ///
     /// All pages are pre-allocated and placed on the free list.
-    pub fn new(
-        max_pages: usize,
-        page_size: usize,
-        num_kv_heads: usize,
-        head_dim: usize,
-    ) -> Self {
+    pub fn new(max_pages: usize, page_size: usize, num_kv_heads: usize, head_dim: usize) -> Self {
         let pages: Vec<PhysicalPage> = (0..max_pages)
             .map(|_| PhysicalPage::new(page_size, num_kv_heads, head_dim))
             .collect();
@@ -80,10 +75,7 @@ impl BlockAllocator {
     /// Allocate a single page. Returns `OutOfPages` if the pool is exhausted.
     pub fn allocate(&mut self) -> Result<PageId> {
         let page_id = self.free_list.pop().ok_or_else(|| {
-            ServingError::OutOfPages(format!(
-                "all {} pages in use",
-                self.pages.len()
-            ))
+            ServingError::OutOfPages(format!("all {} pages in use", self.pages.len()))
         })?;
         self.ref_counts[page_id.0 as usize] = 1;
         self.pages[page_id.0 as usize].reset();
@@ -106,9 +98,9 @@ impl BlockAllocator {
                 idx
             )));
         }
-        self.ref_counts[idx] = self.ref_counts[idx].checked_add(1).ok_or_else(|| {
-            ServingError::RefCount(format!("ref count overflow on page {}", idx))
-        })?;
+        self.ref_counts[idx] = self.ref_counts[idx]
+            .checked_add(1)
+            .ok_or_else(|| ServingError::RefCount(format!("ref count overflow on page {}", idx)))?;
         Ok(())
     }
 
@@ -190,8 +182,7 @@ impl BlockAllocator {
         debug_assert_eq!(
             self.ref_counts[page_id.0 as usize], 1,
             "mutable access to shared page {} (ref_count={})",
-            page_id.0,
-            self.ref_counts[page_id.0 as usize]
+            page_id.0, self.ref_counts[page_id.0 as usize]
         );
         &mut self.pages[page_id.0 as usize]
     }
@@ -386,9 +377,7 @@ mod tests {
     fn free_sequence_pages_skips_invalid() {
         let mut alloc = make_allocator(8);
         let p0 = alloc.allocate().unwrap();
-        alloc
-            .free_sequence_pages(&[p0, PageId::INVALID])
-            .unwrap();
+        alloc.free_sequence_pages(&[p0, PageId::INVALID]).unwrap();
         assert_eq!(alloc.used_count(), 0);
     }
 

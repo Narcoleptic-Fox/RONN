@@ -6,7 +6,7 @@
 use crate::block_manager::BlockAllocator;
 use crate::config::ServingConfig;
 use crate::paged_cache::{PagedLayerView, SequencePageTable};
-use crate::prefix_cache::{compute_hash_chain, PrefixCache};
+use crate::prefix_cache::{PrefixCache, compute_hash_chain};
 use crate::scheduler::{Scheduler, SchedulerOutput, SchedulerStats};
 use crate::sequence::{FinishReason, SequenceId};
 
@@ -57,9 +57,9 @@ pub struct ServingEngine {
 impl ServingEngine {
     /// Create a new serving engine for a loaded model.
     pub fn new(model: Model, config: ServingConfig) -> Result<Self> {
-        config.validate().map_err(|e| {
-            EngineError::Serving(format!("invalid serving config: {}", e))
-        })?;
+        config
+            .validate()
+            .map_err(|e| EngineError::Serving(format!("invalid serving config: {}", e)))?;
 
         let num_layers = model.config.num_layers;
         let num_kv_heads = model.config.num_kv_heads;
@@ -94,14 +94,14 @@ impl ServingEngine {
     /// If prefix caching is enabled, the engine will look up the prompt
     /// in the prefix cache and share pages for any matching prefix,
     /// skipping prefill for that portion.
-    pub fn add_request(
-        &mut self,
-        prompt_tokens: Vec<u32>,
-        max_new_tokens: usize,
-    ) -> SequenceId {
+    pub fn add_request(&mut self, prompt_tokens: Vec<u32>, max_new_tokens: usize) -> SequenceId {
         // Query prefix cache before admission.
-        let lookup = self.prefix_cache.lookup(&prompt_tokens, self.config.page_size);
-        let seq_id = self.scheduler.add_request(prompt_tokens.clone(), max_new_tokens);
+        let lookup = self
+            .prefix_cache
+            .lookup(&prompt_tokens, self.config.page_size);
+        let seq_id = self
+            .scheduler
+            .add_request(prompt_tokens.clone(), max_new_tokens);
 
         if lookup.cached_pages > 0 {
             // Pre-populate the sequence's page table with shared pages.
@@ -125,9 +125,10 @@ impl ServingEngine {
 
     /// Cancel a request. Frees any allocated KV pages.
     pub fn cancel_request(&mut self, id: SequenceId) -> Result<()> {
-        let pages = self.scheduler.cancel_request(id).map_err(|e| {
-            EngineError::Serving(format!("cancel failed: {}", e))
-        })?;
+        let pages = self
+            .scheduler
+            .cancel_request(id)
+            .map_err(|e| EngineError::Serving(format!("cancel failed: {}", e)))?;
         let _ = self.allocator.free_sequence_pages(&pages);
         Ok(())
     }
@@ -155,7 +156,8 @@ impl ServingEngine {
                 seq_id: *seq_id,
                 logits,
             });
-            self.scheduler.on_prefill_advanced(*seq_id, *tokens_to_prefill);
+            self.scheduler
+                .on_prefill_advanced(*seq_id, *tokens_to_prefill);
 
             // If prefill is now complete, cache the computed pages.
             if let Some(seq) = self.scheduler.get_sequence(*seq_id) {
@@ -194,12 +196,7 @@ impl ServingEngine {
     /// Notify the engine that a token was generated for a sequence.
     ///
     /// Call this after sampling from the logits returned by [`step`].
-    pub fn on_token_generated(
-        &mut self,
-        seq_id: SequenceId,
-        token_id: u32,
-        is_eos: bool,
-    ) {
+    pub fn on_token_generated(&mut self, seq_id: SequenceId, token_id: u32, is_eos: bool) {
         self.scheduler.on_token_generated(seq_id, token_id, is_eos);
     }
 
@@ -229,9 +226,10 @@ impl ServingEngine {
 
     /// Run prefill for a sequence: process `num_tokens` prompt tokens.
     fn run_prefill(&mut self, seq_id: SequenceId, num_tokens: usize) -> Result<Vec<f32>> {
-        let seq = self.scheduler.get_sequence(seq_id).ok_or_else(|| {
-            EngineError::Serving(format!("sequence {:?} not found", seq_id))
-        })?;
+        let seq = self
+            .scheduler
+            .get_sequence(seq_id)
+            .ok_or_else(|| EngineError::Serving(format!("sequence {:?} not found", seq_id)))?;
 
         let start_idx = seq.prefilled_tokens;
         let token_ids = &seq.prompt_tokens[start_idx..start_idx + num_tokens];
@@ -248,7 +246,10 @@ impl ServingEngine {
 
         for (i, &token_id) in token_ids.iter().enumerate() {
             let dst = &mut hidden_batch[i * cfg.hidden_dim..(i + 1) * cfg.hidden_dim];
-            self.model.weights.token_embedding.copy_row_to(token_id as usize, dst);
+            self.model
+                .weights
+                .token_embedding
+                .copy_row_to(token_id as usize, dst);
             if let Some(scale) = cfg.embedding_scale {
                 for v in dst.iter_mut() {
                     *v *= scale;
@@ -316,19 +317,13 @@ impl ServingEngine {
             .last()
             .copied()
             .or_else(|| seq.prompt_tokens.last().copied())
-            .ok_or_else(|| {
-                EngineError::Serving("no token available for decode".into())
-            })?;
+            .ok_or_else(|| EngineError::Serving("no token available for decode".into()))?;
 
         self.forward_single_token(seq_id, token_id)
     }
 
     /// Forward pass for a single token through all layers using paged cache.
-    fn forward_single_token(
-        &mut self,
-        seq_id: SequenceId,
-        token_id: u32,
-    ) -> Result<Vec<f32>> {
+    fn forward_single_token(&mut self, seq_id: SequenceId, token_id: u32) -> Result<Vec<f32>> {
         let cfg = &self.model.config;
 
         // 1. Embedding.
@@ -422,8 +417,9 @@ impl ServingEngine {
             if valid {
                 // Only increment ref counts if the page is actually new to the cache.
                 // Duplicates are a no-op touch — incrementing refs for them would leak.
-                let inserted = self.prefix_cache
-                    .insert(*hash, all_layer_ids.clone(), chunk.len(), page_size);
+                let inserted =
+                    self.prefix_cache
+                        .insert(*hash, all_layer_ids.clone(), chunk.len(), page_size);
                 if inserted {
                     for &pid in &all_layer_ids {
                         let _ = self.allocator.inc_ref(pid);
@@ -507,9 +503,7 @@ mod tests {
             rms_norm_eps: 1e-5,
             norm_type: NormType::RMSNorm,
             ffn_type: FFNType::SwiGLU,
-            pos_encoding: PosEncoding::RoPE {
-                freq_base: 10000.0,
-            },
+            pos_encoding: PosEncoding::RoPE { freq_base: 10000.0 },
             block_style: BlockStyle::Sequential,
             has_qkv_bias: false,
             has_output_bias: false,
@@ -681,7 +675,10 @@ mod tests {
         let output = engine.step().unwrap();
         assert_eq!(output.outputs.len(), 1);
         let logits = &output.outputs[0].logits;
-        assert!(logits.iter().all(|v| v.is_finite()), "prefill logits not finite");
+        assert!(
+            logits.iter().all(|v| v.is_finite()),
+            "prefill logits not finite"
+        );
 
         // 3 decode steps.
         for i in 0..3 {
@@ -743,7 +740,8 @@ mod tests {
         // Check that the sequence was pre-populated with cached tokens.
         let seq2 = engine.scheduler.get_sequence(id2).unwrap();
         assert_eq!(
-            seq2.page_table.num_tokens(), 4,
+            seq2.page_table.num_tokens(),
+            4,
             "prefix cache should have pre-populated 4 tokens (1 full page)"
         );
         assert_eq!(
@@ -755,7 +753,12 @@ mod tests {
         // Each layer should have 1 shared page.
         for layer_idx in 0..2 {
             let pages = seq2.page_table.layer_pages(layer_idx);
-            assert_eq!(pages.len(), 1, "layer {} should have 1 cached page", layer_idx);
+            assert_eq!(
+                pages.len(),
+                1,
+                "layer {} should have 1 cached page",
+                layer_idx
+            );
         }
     }
 
@@ -769,14 +772,11 @@ mod tests {
         config.page_size = 4;
 
         // --- Run without prefix caching first ---
-        let mut engine_no_cache = ServingEngine::new(
-            make_tiny_model(2),
-            {
-                let mut c = make_serving_config();
-                c.enable_prefix_caching = false;
-                c
-            },
-        )
+        let mut engine_no_cache = ServingEngine::new(make_tiny_model(2), {
+            let mut c = make_serving_config();
+            c.enable_prefix_caching = false;
+            c
+        })
         .unwrap();
 
         let prompt = vec![1, 2, 3, 4, 5];
@@ -804,7 +804,9 @@ mod tests {
             assert!(
                 (a - b).abs() < 1e-5,
                 "logit mismatch at {}: no_cache={}, cached={}",
-                i, a, b,
+                i,
+                a,
+                b,
             );
         }
     }
@@ -826,7 +828,8 @@ mod tests {
         assert!(
             free_during < free_before,
             "should have allocated pages: before={}, during={}",
-            free_before, free_during,
+            free_before,
+            free_during,
         );
 
         // Cancel the running request.

@@ -111,7 +111,11 @@ pub struct MirostatState {
 
 impl MirostatState {
     pub fn new(tau: f32, eta: f32) -> Self {
-        Self { tau, eta, mu: 2.0 * tau }
+        Self {
+            tau,
+            eta,
+            mu: 2.0 * tau,
+        }
     }
 }
 
@@ -397,8 +401,7 @@ fn apply_tfs(probs: &mut [f32], tfs_z: f32) {
         }
     }
 
-    let keep: std::collections::HashSet<usize> =
-        sorted[..cutoff].iter().map(|&(i, _)| i).collect();
+    let keep: std::collections::HashSet<usize> = sorted[..cutoff].iter().map(|&(i, _)| i).collect();
     for i in 0..probs.len() {
         if !keep.contains(&i) {
             probs[i] = 0.0;
@@ -419,8 +422,7 @@ fn apply_top_p(probs: &mut [f32], top_p: f32) {
             break;
         }
     }
-    let keep: std::collections::HashSet<usize> =
-        sorted[..cutoff].iter().map(|&(i, _)| i).collect();
+    let keep: std::collections::HashSet<usize> = sorted[..cutoff].iter().map(|&(i, _)| i).collect();
     for i in 0..probs.len() {
         if !keep.contains(&i) {
             probs[i] = 0.0;
@@ -767,7 +769,11 @@ mod tests {
         for _ in 0..400 {
             seen.insert(sample(&logits, &config, &[], &mut rng));
         }
-        assert_eq!(seen.len(), 8, "all tokens should be reachable from uniform logits");
+        assert_eq!(
+            seen.len(),
+            8,
+            "all tokens should be reachable from uniform logits"
+        );
     }
 
     #[test]

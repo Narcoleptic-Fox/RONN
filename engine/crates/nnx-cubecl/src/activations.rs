@@ -34,8 +34,7 @@ pub fn gelu_kernel(input: &Array<f32>, output: &mut Array<f32>, len: u32) {
     let idx = ABSOLUTE_POS;
     if idx < len {
         let x = input[idx];
-        let cdf =
-            0.5f32 * (1.0f32 + f32::tanh(0.7978845608f32 * (x + 0.044715f32 * x * x * x)));
+        let cdf = 0.5f32 * (1.0f32 + f32::tanh(0.7978845608f32 * (x + 0.044715f32 * x * x * x)));
         output[idx] = x * cdf;
     }
 }
@@ -46,8 +45,7 @@ pub fn gelu_inplace_kernel(data: &mut Array<f32>, len: u32) {
     let idx = ABSOLUTE_POS;
     if idx < len {
         let x = data[idx];
-        let cdf =
-            0.5f32 * (1.0f32 + f32::tanh(0.7978845608f32 * (x + 0.044715f32 * x * x * x)));
+        let cdf = 0.5f32 * (1.0f32 + f32::tanh(0.7978845608f32 * (x + 0.044715f32 * x * x * x)));
         data[idx] = x * cdf;
     }
 }
@@ -81,12 +79,7 @@ pub fn add_inplace_kernel(a: &mut Array<f32>, b: &Array<f32>, len: u32) {
 
 /// Fused SwiGLU: `output = silu(gate) * up`.
 #[cube(launch)]
-pub fn fused_swiglu_kernel(
-    gate: &Array<f32>,
-    up: &Array<f32>,
-    output: &mut Array<f32>,
-    len: u32,
-) {
+pub fn fused_swiglu_kernel(gate: &Array<f32>, up: &Array<f32>, output: &mut Array<f32>, len: u32) {
     let idx = ABSOLUTE_POS;
     if idx < len {
         let g = gate[idx];
@@ -97,17 +90,11 @@ pub fn fused_swiglu_kernel(
 
 /// Fused GeGLU: `output = gelu(gate) * up`.
 #[cube(launch)]
-pub fn fused_geglu_kernel(
-    gate: &Array<f32>,
-    up: &Array<f32>,
-    output: &mut Array<f32>,
-    len: u32,
-) {
+pub fn fused_geglu_kernel(gate: &Array<f32>, up: &Array<f32>, output: &mut Array<f32>, len: u32) {
     let idx = ABSOLUTE_POS;
     if idx < len {
         let g = gate[idx];
-        let cdf =
-            0.5f32 * (1.0f32 + f32::tanh(0.7978845608f32 * (g + 0.044715f32 * g * g * g)));
+        let cdf = 0.5f32 * (1.0f32 + f32::tanh(0.7978845608f32 * (g + 0.044715f32 * g * g * g)));
         output[idx] = (g * cdf) * up[idx];
     }
 }

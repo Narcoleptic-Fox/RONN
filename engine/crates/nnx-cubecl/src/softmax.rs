@@ -7,11 +7,7 @@ use cubecl::prelude::*;
 /// Numerically stable: max-subtract, exp, sum, divide.
 /// Launch one cube per row, one thread per cube (serial per row — correct first).
 #[cube(launch)]
-pub fn softmax_kernel(
-    data: &mut Array<f32>,
-    row_offset: u32,
-    seq_len: u32,
-) {
+pub fn softmax_kernel(data: &mut Array<f32>, row_offset: u32, seq_len: u32) {
     let tid = UNIT_POS_X;
 
     if tid == 0u32 {

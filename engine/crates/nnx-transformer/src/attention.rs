@@ -359,18 +359,17 @@ pub fn attention_prefill_batch_configurable(
     //
     // Causal mask rule: token at batch index `i` (absolute position
     // `cache_pos_before_batch + i`) may attend to KV positions 0..=(cache_pos_before_batch + i).
-    let attn_output =
-        compute_prefill_attention_all_heads(
-            &q_all,
-            cache,
-            batch_size,
-            config.num_heads,
-            heads_per_kv,
-            config.head_dim,
-            cache_pos_before_batch,
-            total_kv_len,
-            scale,
-        );
+    let attn_output = compute_prefill_attention_all_heads(
+        &q_all,
+        cache,
+        batch_size,
+        config.num_heads,
+        heads_per_kv,
+        config.head_dim,
+        cache_pos_before_batch,
+        total_kv_len,
+        scale,
+    );
 
     // Step 6: Output projection in batch, plus optional bias.
     let mut output = vec![0.0f32; batch_size * hidden_dim];
@@ -980,11 +979,9 @@ mod tests {
         for token_idx in 0..batch_size {
             let hidden = &hidden_batch[token_idx * hidden_dim..(token_idx + 1) * hidden_dim];
             let position = start_position + token_idx;
-            let out =
-                attention_decode_configurable(hidden, weights, &mut cache, position, config)
-                    .unwrap();
-            outputs[token_idx * hidden_dim..(token_idx + 1) * hidden_dim]
-                .copy_from_slice(&out);
+            let out = attention_decode_configurable(hidden, weights, &mut cache, position, config)
+                .unwrap();
+            outputs[token_idx * hidden_dim..(token_idx + 1) * hidden_dim].copy_from_slice(&out);
         }
 
         outputs
@@ -1000,10 +997,20 @@ mod tests {
         let intermediate_dim = 16;
         let batch_size = 4;
 
-        let config =
-            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
-        let weights =
-            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let config = make_llama_config(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
 
         // Give each token a distinct hidden state.
         let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
@@ -1027,7 +1034,11 @@ mod tests {
             "all outputs should be finite"
         );
         // All batch tokens should have been stored in the KV cache.
-        assert_eq!(cache.len(), batch_size, "cache should hold all prompt tokens");
+        assert_eq!(
+            cache.len(),
+            batch_size,
+            "cache should hold all prompt tokens"
+        );
     }
 
     #[test]
@@ -1042,10 +1053,20 @@ mod tests {
         let intermediate_dim = 16;
         let batch_size = 5;
 
-        let config =
-            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
-        let weights =
-            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let config = make_llama_config(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
 
         let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
             .map(|i| ((i % 11) as f32 - 5.0) * 0.1)
@@ -1089,10 +1110,20 @@ mod tests {
         let intermediate_dim = 32;
         let batch_size = 4;
 
-        let config =
-            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
-        let weights =
-            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let config = make_llama_config(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
 
         let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
             .map(|i| ((i % 13) as f32 - 6.0) * 0.08)
@@ -1136,10 +1167,20 @@ mod tests {
         let prior_tokens = 3;
         let batch_size = 4;
 
-        let config =
-            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
-        let weights =
-            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let config = make_llama_config(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
 
         // Hidden states for all tokens (prior + batch).
         let all_hidden: Vec<f32> = (0..(prior_tokens + batch_size) * hidden_dim)
@@ -1192,15 +1233,23 @@ mod tests {
         let head_dim = 4;
         let intermediate_dim = 16;
 
-        let config =
-            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
-        let weights =
-            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let config = make_llama_config(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
 
         // Vary hidden states so the test is sensitive to cross-token attention.
-        let single_hidden: Vec<f32> = (0..hidden_dim)
-            .map(|i| (i as f32 + 1.0) * 0.3)
-            .collect();
+        let single_hidden: Vec<f32> = (0..hidden_dim).map(|i| (i as f32 + 1.0) * 0.3).collect();
         let multi_hidden: Vec<f32> = {
             let mut v = single_hidden.clone();
             // Append a second token with a very different hidden state.
@@ -1260,10 +1309,20 @@ mod tests {
         let intermediate_dim = 32;
         let batch_size = 3;
 
-        let config =
-            make_llama_config(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
-        let weights =
-            BlockWeights::test_no_bias(hidden_dim, num_heads, num_kv_heads, head_dim, intermediate_dim);
+        let config = make_llama_config(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
 
         let hidden_batch: Vec<f32> = (0..batch_size * hidden_dim)
             .map(|i| ((i % 5) as f32 - 2.0) * 0.15)
