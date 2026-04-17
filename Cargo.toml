@@ -80,6 +80,7 @@ reqwest = { version = "0.11", features = ["json"] }
 # Testing and benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
+tempfile = "3.15"
 
 # CPU feature detection and SIMD
 cpufeatures = "0.2"

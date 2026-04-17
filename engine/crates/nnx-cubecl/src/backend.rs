@@ -456,3 +456,70 @@ impl<R: Runtime> KernelBackend for CubeclBackend<R> {
         }
     }
 }
+
+// --- Activation Quantization (non-trait methods) ---
+
+impl<R: Runtime> CubeclBackend<R> {
+    /// Allocate Q8_0 quantization buffers for a given f32 buffer size.
+    ///
+    /// Returns (scales, quants) where:
+    /// - `scales`: One f32 per block (num_blocks = ceil(numel / 32))
+    /// - `quants`: 8 u32 words per block (32 bytes packed)
+    pub fn alloc_q8_0_buffers(&self, numel: usize) -> (GpuBuffer, GpuBuffer) {
+        let num_blocks = numel.div_ceil(32);
+        let scales = self.zeros(num_blocks);
+        let quants = self.from_u32(&vec![0u32; num_blocks * 8]);
+        (scales, quants)
+    }
+
+    /// Quantize a flat f32 buffer to Q8_0 format.
+    ///
+    /// Launches a kernel that computes per-block scales and quantizes values
+    /// to signed i8, packed into u32 words.
+    pub fn quantize_f32_to_q8_0(
+        &self,
+        input: &GpuBuffer,
+        scales: &mut GpuBuffer,
+        quants: &mut GpuBuffer,
+    ) {
+        let numel = input.len;
+        let num_blocks = numel.div_ceil(32);
+
+        unsafe {
+            crate::activation_quant::quantize_f32_to_q8_0_kernel::launch::<R>(
+                &self.client,
+                CubeCount::Static(num_blocks as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&input.handle, numel, 1),
+                ArrayArg::from_raw_parts::<f32>(&scales.handle, scales.len, 1),
+                ArrayArg::from_raw_parts::<u32>(&quants.handle, quants.len, 1),
+                ScalarArg::new(numel as u32),
+            );
+        }
+    }
+
+    /// Dequantize Q8_0 format back to f32.
+    ///
+    /// Reconstructs f32 values from scale + quantized representation.
+    pub fn dequantize_q8_0_to_f32(
+        &self,
+        scales: &GpuBuffer,
+        quants: &GpuBuffer,
+        output: &mut GpuBuffer,
+    ) {
+        let numel = output.len;
+        let num_blocks = numel.div_ceil(32);
+
+        unsafe {
+            crate::activation_quant::dequantize_q8_0_to_f32_kernel::launch::<R>(
+                &self.client,
+                CubeCount::Static(num_blocks as u32, 1, 1),
+                CubeDim::new(1, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&scales.handle, scales.len, 1),
+                ArrayArg::from_raw_parts::<u32>(&quants.handle, quants.len, 1),
+                ArrayArg::from_raw_parts::<f32>(&output.handle, numel, 1),
+                ScalarArg::new(numel as u32),
+            );
+        }
+    }
+}

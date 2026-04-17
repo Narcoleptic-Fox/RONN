@@ -633,7 +633,7 @@ impl ModelConfig {
     /// dependency with `nnx-transformer`.
     pub fn to_gpu_config(&self) -> nnx_core::gpu_config::GpuConfig {
         use nnx_core::gpu_config::{
-            GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
+            GpuActivationQuant, GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
         };
 
         let pos_encoding = match &self.pos_encoding {
@@ -667,6 +667,11 @@ impl ModelConfig {
             BlockStyle::Parallel => GpuBlockStyle::Parallel,
         };
 
+        let activation_quant = match self.activation_quantization {
+            ActivationQuantization::None => GpuActivationQuant::None,
+            ActivationQuantization::Q8_0 => GpuActivationQuant::Q8_0,
+        };
+
         GpuConfig {
             num_layers: self.num_layers,
             hidden_dim: self.hidden_dim,
@@ -684,6 +689,7 @@ impl ModelConfig {
             block_style,
             has_qkv_bias: self.has_qkv_bias,
             has_output_bias: self.has_output_bias,
+            activation_quant,
         }
     }
 

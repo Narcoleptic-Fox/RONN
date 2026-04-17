@@ -803,6 +803,7 @@ mod tests {
             has_qkv_bias: false,
             has_output_bias: false,
             embedding_scale: None,
+            activation_quantization: ActivationQuantization::None,
         };
 
         let q_dim = num_heads * head_dim;

@@ -67,6 +67,21 @@ impl PageId {
     pub const INVALID: PageId = PageId(u32::MAX);
 }
 
+/// Activation quantization strategy for intermediate GPU buffers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuActivationQuant {
+    /// No activation quantization; all intermediates remain f32.
+    None,
+    /// Q8_0 round-trip quantization for attention intermediates (Q, scores).
+    Q8_0,
+}
+
+impl Default for GpuActivationQuant {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 /// Minimal model configuration needed to run a GPU decode step.
 ///
 /// Produced by `ModelConfig::to_gpu_config()` in `nnx-transformer`.
@@ -106,4 +121,6 @@ pub struct GpuConfig {
     pub has_qkv_bias: bool,
     /// Whether the output projection has a bias term.
     pub has_output_bias: bool,
+    /// Activation quantization strategy (default: None).
+    pub activation_quant: GpuActivationQuant,
 }

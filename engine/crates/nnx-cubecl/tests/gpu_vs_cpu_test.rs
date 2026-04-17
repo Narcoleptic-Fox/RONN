@@ -45,6 +45,7 @@ fn test_config() -> GpuConfig {
         block_style: GpuBlockStyle::Sequential,
         has_qkv_bias: false,
         has_output_bias: false,
+        activation_quant: nnx_core::gpu_config::GpuActivationQuant::None,
     }
 }
 

@@ -25,6 +25,7 @@
 //! ```
 
 pub mod activations;
+pub mod activation_quant;
 pub mod attention;
 pub mod backend;
 pub mod inference;

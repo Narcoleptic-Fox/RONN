@@ -20,6 +20,7 @@ protox = "0.7"
 
 [dev-dependencies]
 proptest.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

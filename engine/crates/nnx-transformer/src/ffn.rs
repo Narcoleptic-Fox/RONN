@@ -6,8 +6,9 @@
 
 use crate::block::BlockWeights;
 use crate::config::{ActivationQuantization, FFNType, ModelConfig};
+use crate::quant_utils::maybe_quantize_activations;
 use crate::weights::Matrix;
-use nnx_core::error::{EngineError, Result};
+use nnx_core::error::Result;
 use rayon::prelude::*;
 
 /// Architecture-aware FFN forward pass.
@@ -94,25 +95,7 @@ pub fn ffn_forward_batch(
     }
 }
 
-fn maybe_quantize_activations(
-    activations: &mut [f32],
-    rows: usize,
-    cols: usize,
-    mode: ActivationQuantization,
-) -> Result<()> {
-    match mode {
-        ActivationQuantization::None => Ok(()),
-        ActivationQuantization::Q8_0 => {
-            nnx_quant::encode::roundtrip_matrix_in_place(
-                activations,
-                rows,
-                cols,
-                nnx_quant::GGMLType::Q8_0,
-            )
-            .map_err(EngineError::Quantization)
-        }
-    }
-}
+
 
 /// SwiGLU FFN: gate and up projections computed in parallel, then SiLU + element-wise mul + down.
 pub fn swiglu_ffn(

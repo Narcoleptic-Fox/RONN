@@ -5,9 +5,13 @@ use crate::proto;
 use half::{bf16, f16};
 use nnx_transformer::block::BlockWeights;
 use nnx_transformer::config::{
-    Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding, find_profile_by_hf,
+    ActivationQuantization, Architecture, BlockStyle, FFNType, ModelConfig, NormType,
+    PosEncoding, PosEncodingKind, find_profile_by_hf,
 };
 use nnx_transformer::model::{Model, ModelWeights};
+use nnx_transformer::weight_names::{
+    WeightNameMap, map_hf_architecture, split_fused_qkv_bias, split_fused_qkv_weight,
+};
 use nnx_transformer::weights::Matrix;
 use prost::Message;
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,6 +37,21 @@ impl OnnxParser {
     pub fn parse_file(path: impl AsRef<Path>) -> Result<ParsedModel> {
         let bytes = fs::read(path)?;
         Self::parse_bytes(&bytes)
+    }
+
+    /// Load a dense transformer model from an ONNX file with architecture hint.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the ONNX model file
+    /// * `architecture` - HuggingFace architecture name (e.g., "LlamaForCausalLM", "GPT2LMHeadModel")
+    ///
+    /// # Example
+    /// ```ignore
+    /// let model = OnnxParser::load_model("model.onnx", "GPT2LMHeadModel")?;
+    /// ```
+    pub fn load_model(path: impl AsRef<Path>, architecture: &str) -> Result<Model> {
+        let parsed = Self::parse_file(path)?;
+        parsed.load_dense_model(architecture)
     }
 }
 
@@ -210,17 +229,61 @@ impl ParsedModel {
         &self.initializers
     }
 
-    /// Build a dense Llama-family `nnx-transformer` model from ONNX initializers.
-    pub fn load_dense_llama_model(&self) -> Result<Model> {
-        let config = infer_llama_config(self)?;
-        let token_embedding = self.decode_matrix(
-            "model.embed_tokens.weight",
-            config.vocab_size,
-            config.hidden_dim,
-        )?;
-        let final_norm = self.decode_vector("model.norm.weight", config.hidden_dim)?;
-        let lm_head = if self.initializers.contains_key("lm_head.weight") {
-            self.decode_matrix("lm_head.weight", config.vocab_size, config.hidden_dim)?
+    /// Build a dense transformer model from ONNX initializers using architecture-aware weight mapping.
+    ///
+    /// # Arguments
+    /// * `architecture` - HuggingFace architecture name (e.g., "LlamaForCausalLM", "GPT2LMHeadModel")
+    ///
+    /// This method uses `nnx_transformer::weight_names` to resolve tensor names for all supported
+    /// decoder-only transformer families.
+    pub fn load_dense_model(&self, architecture: &str) -> Result<Model> {
+        let arch = map_hf_architecture(architecture).ok_or_else(|| {
+            OnnxError::UnsupportedModel(format!(
+                "Unrecognized HuggingFace architecture '{}'",
+                architecture
+            ))
+        })?;
+
+        let name_map = WeightNameMap::from_architecture(arch);
+        let config = infer_config_from_architecture(self, architecture, &name_map)?;
+
+        let embed_name = name_map
+            .resolve_global("token_embd.weight")
+            .unwrap_or("model.embed_tokens.weight");
+        let token_embedding = self.decode_matrix(embed_name, config.vocab_size, config.hidden_dim)?;
+
+        let position_embedding = name_map
+            .resolve_global("pos_embd.weight")
+            .and_then(|name| {
+                self.initializers
+                    .contains_key(name)
+                    .then(|| self.decode_matrix(name, config.max_context_length, config.hidden_dim))
+            })
+            .transpose()?;
+
+        let norm_name = name_map
+            .resolve_global("output_norm.weight")
+            .unwrap_or("model.norm.weight");
+        let final_norm = self.decode_vector(norm_name, config.hidden_dim)?;
+
+        let final_norm_bias = if matches!(config.norm_type, NormType::LayerNorm) {
+            name_map
+                .resolve_global("output_norm.bias")
+                .and_then(|name| {
+                    self.initializers
+                        .contains_key(name)
+                        .then(|| self.decode_vector(name, config.hidden_dim))
+                })
+                .transpose()?
+        } else {
+            None
+        };
+
+        let lm_head_name = name_map
+            .resolve_global("output.weight")
+            .unwrap_or("lm_head.weight");
+        let lm_head = if self.initializers.contains_key(lm_head_name) {
+            self.decode_matrix(lm_head_name, config.vocab_size, config.hidden_dim)?
         } else {
             token_embedding.clone()
         };
@@ -230,57 +293,58 @@ impl ParsedModel {
         let kv_dim = config.num_kv_heads * config.head_dim;
 
         for layer_idx in 0..config.num_layers {
-            let prefix = format!("model.layers.{layer_idx}");
+            let hf_name = |internal: &str| -> String {
+                name_map
+                    .resolve_layer(internal, layer_idx)
+                    .unwrap_or_else(|| internal.to_string())
+            };
+
+            let attn_norm_name = hf_name(&format!("blk.{layer_idx}.attn_norm.weight"));
+            let ffn_norm_name = hf_name(&format!("blk.{layer_idx}.ffn_norm.weight"));
+            let (wq, wk, wv, bq, bk, bv) = if name_map.has_fused_qkv() {
+                self.decode_fused_qkv(&name_map, layer_idx, q_dim, kv_dim, config.hidden_dim)?
+            } else {
+                self.decode_split_qkv(&hf_name, &config, layer_idx, q_dim, kv_dim)?
+            };
+
+            let wo_name = hf_name(&format!("blk.{layer_idx}.attn_output.weight"));
+            let wo = self.decode_matrix(&wo_name, config.hidden_dim, q_dim)?;
+            let bo = if config.has_output_bias {
+                let bias_name = hf_name(&format!("blk.{layer_idx}.attn_output.bias"));
+                self.try_decode_vector(&bias_name, config.hidden_dim)?
+            } else {
+                None
+            };
+
+            let attn_norm_bias = if matches!(config.norm_type, NormType::LayerNorm) {
+                self.try_decode_vector(&hf_name(&format!("blk.{layer_idx}.attn_norm.bias")), config.hidden_dim)?
+            } else {
+                None
+            };
+            let ffn_norm_bias = if matches!(config.norm_type, NormType::LayerNorm) {
+                self.try_decode_vector(&hf_name(&format!("blk.{layer_idx}.ffn_norm.bias")), config.hidden_dim)?
+            } else {
+                None
+            };
+
+            let (w_gate, w_up, w_down) = self.decode_ffn_weights(&hf_name, &config, layer_idx)?;
+
             layers.push(BlockWeights {
-                attn_norm: self.decode_vector(
-                    &format!("{prefix}.input_layernorm.weight"),
-                    config.hidden_dim,
-                )?,
-                ffn_norm: self.decode_vector(
-                    &format!("{prefix}.post_attention_layernorm.weight"),
-                    config.hidden_dim,
-                )?,
-                wq: self.decode_matrix(
-                    &format!("{prefix}.self_attn.q_proj.weight"),
-                    q_dim,
-                    config.hidden_dim,
-                )?,
-                wk: self.decode_matrix(
-                    &format!("{prefix}.self_attn.k_proj.weight"),
-                    kv_dim,
-                    config.hidden_dim,
-                )?,
-                wv: self.decode_matrix(
-                    &format!("{prefix}.self_attn.v_proj.weight"),
-                    kv_dim,
-                    config.hidden_dim,
-                )?,
-                wo: self.decode_matrix(
-                    &format!("{prefix}.self_attn.o_proj.weight"),
-                    config.hidden_dim,
-                    q_dim,
-                )?,
-                w_gate: self.decode_matrix(
-                    &format!("{prefix}.mlp.gate_proj.weight"),
-                    config.intermediate_dim,
-                    config.hidden_dim,
-                )?,
-                w_up: self.decode_matrix(
-                    &format!("{prefix}.mlp.up_proj.weight"),
-                    config.intermediate_dim,
-                    config.hidden_dim,
-                )?,
-                w_down: self.decode_matrix(
-                    &format!("{prefix}.mlp.down_proj.weight"),
-                    config.hidden_dim,
-                    config.intermediate_dim,
-                )?,
-                bq: None,
-                bk: None,
-                bv: None,
-                bo: None,
-                attn_norm_bias: None,
-                ffn_norm_bias: None,
+                attn_norm: self.decode_vector(&attn_norm_name, config.hidden_dim)?,
+                ffn_norm: self.try_decode_vector(&ffn_norm_name, config.hidden_dim)?.unwrap_or_else(|| vec![1.0; config.hidden_dim]),
+                wq,
+                wk,
+                wv,
+                wo,
+                w_gate,
+                w_up,
+                w_down,
+                bq,
+                bk,
+                bv,
+                bo,
+                attn_norm_bias,
+                ffn_norm_bias,
             });
         }
 
@@ -288,13 +352,20 @@ impl ParsedModel {
             config,
             ModelWeights {
                 token_embedding,
-                position_embedding: None,
+                position_embedding,
                 layers,
                 final_norm,
-                final_norm_bias: None,
+                final_norm_bias,
                 lm_head,
             },
         ))
+    }
+
+    /// Build a dense Llama-family `nnx-transformer` model from ONNX initializers.
+    ///
+    /// This is a convenience wrapper around `load_dense_model("LlamaForCausalLM")`.
+    pub fn load_dense_llama_model(&self) -> Result<Model> {
+        self.load_dense_model("LlamaForCausalLM")
     }
 
     fn decode_vector(&self, name: &str, expected_len: usize) -> Result<Vec<f32>> {
@@ -317,6 +388,141 @@ impl ParsedModel {
             .ok_or_else(|| OnnxError::MissingInitializer(name.to_string()))?;
         validate_shape(name, initializer.metadata(), &[rows, cols])?;
         Ok(Matrix::dense(initializer.decode_f32()?, rows, cols))
+    }
+
+    fn try_decode_vector(&self, name: &str, expected_len: usize) -> Result<Option<Vec<f32>>> {
+        match self.initializer(name) {
+            Some(_) => self.decode_vector(name, expected_len).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn decode_split_qkv(
+        &self,
+        hf_name: &impl Fn(&str) -> String,
+        config: &ModelConfig,
+        layer: usize,
+        q_dim: usize,
+        kv_dim: usize,
+    ) -> Result<(
+        Matrix,
+        Matrix,
+        Matrix,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+    )> {
+        let wq_name = hf_name(&format!("blk.{layer}.attn_q.weight"));
+        let wk_name = hf_name(&format!("blk.{layer}.attn_k.weight"));
+        let wv_name = hf_name(&format!("blk.{layer}.attn_v.weight"));
+
+        let wq = self.decode_matrix(&wq_name, q_dim, config.hidden_dim)?;
+        let wk = self.decode_matrix(&wk_name, kv_dim, config.hidden_dim)?;
+        let wv = self.decode_matrix(&wv_name, kv_dim, config.hidden_dim)?;
+
+        let (bq, bk, bv) = if config.has_qkv_bias {
+            (
+                self.try_decode_vector(&hf_name(&format!("blk.{layer}.attn_q.bias")), q_dim)?,
+                self.try_decode_vector(&hf_name(&format!("blk.{layer}.attn_k.bias")), kv_dim)?,
+                self.try_decode_vector(&hf_name(&format!("blk.{layer}.attn_v.bias")), kv_dim)?,
+            )
+        } else {
+            (None, None, None)
+        };
+
+        Ok((wq, wk, wv, bq, bk, bv))
+    }
+
+    fn decode_fused_qkv(
+        &self,
+        name_map: &WeightNameMap,
+        layer: usize,
+        q_dim: usize,
+        kv_dim: usize,
+        hidden_dim: usize,
+    ) -> Result<(
+        Matrix,
+        Matrix,
+        Matrix,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+        Option<Vec<f32>>,
+    )> {
+        let weight_name = name_map.fused_qkv_weight_name(layer).ok_or_else(|| {
+            OnnxError::UnsupportedModel(format!(
+                "architecture claims fused QKV but no fused weight pattern exists at layer {}",
+                layer
+            ))
+        })?;
+        let fused = self
+            .initializer(&weight_name)
+            .ok_or_else(|| OnnxError::MissingInitializer(weight_name.clone()))?;
+        validate_shape(
+            &weight_name,
+            fused.metadata(),
+            &[q_dim + kv_dim + kv_dim, hidden_dim],
+        )?;
+        let fused_values = fused.decode_f32()?;
+        let (q, k, v) = split_fused_qkv_weight(&fused_values, q_dim, kv_dim, hidden_dim)
+            .map_err(OnnxError::UnsupportedModel)?;
+
+        let (bq, bk, bv) = if let Some(bias_name) = name_map.fused_qkv_bias_name(layer) {
+            match self.initializer(&bias_name) {
+                Some(initializer) => {
+                    validate_shape(&bias_name, initializer.metadata(), &[q_dim + kv_dim + kv_dim])?;
+                    let fused_bias = initializer.decode_f32()?;
+                    let (bq, bk, bv) = split_fused_qkv_bias(&fused_bias, q_dim, kv_dim)
+                        .map_err(OnnxError::UnsupportedModel)?;
+                    (Some(bq), Some(bk), Some(bv))
+                }
+                None => (None, None, None),
+            }
+        } else {
+            (None, None, None)
+        };
+
+        Ok((
+            Matrix::dense(q, q_dim, hidden_dim),
+            Matrix::dense(k, kv_dim, hidden_dim),
+            Matrix::dense(v, kv_dim, hidden_dim),
+            bq,
+            bk,
+            bv,
+        ))
+    }
+
+    fn decode_ffn_weights(
+        &self,
+        hf_name: &impl Fn(&str) -> String,
+        config: &ModelConfig,
+        layer: usize,
+    ) -> Result<(Matrix, Matrix, Matrix)> {
+        let inter = config.intermediate_dim;
+        let hidden = config.hidden_dim;
+
+        match config.ffn_type {
+            FFNType::SwiGLU | FFNType::GeGLU => {
+                let gate_name = hf_name(&format!("blk.{layer}.ffn_gate.weight"));
+                let up_name = hf_name(&format!("blk.{layer}.ffn_up.weight"));
+                let down_name = hf_name(&format!("blk.{layer}.ffn_down.weight"));
+
+                Ok((
+                    self.decode_matrix(&gate_name, inter, hidden)?,
+                    self.decode_matrix(&up_name, inter, hidden)?,
+                    self.decode_matrix(&down_name, hidden, inter)?,
+                ))
+            }
+            FFNType::GELU => {
+                let fc1_name = hf_name(&format!("blk.{layer}.ffn_gate.weight"));
+                let fc2_name = hf_name(&format!("blk.{layer}.ffn_down.weight"));
+
+                Ok((
+                    self.decode_matrix(&fc1_name, inter, hidden)?,
+                    Matrix::dense(Vec::new(), 0, hidden),
+                    self.decode_matrix(&fc2_name, hidden, inter)?,
+                ))
+            }
+        }
     }
 }
 
@@ -568,6 +774,176 @@ fn validate_shape(name: &str, metadata: &TensorMetadata, expected: &[usize]) -> 
     Ok(())
 }
 
+fn infer_config_from_architecture(
+    model: &ParsedModel,
+    architecture: &str,
+    name_map: &WeightNameMap,
+) -> Result<ModelConfig> {
+    let embed_name = name_map
+        .resolve_global("token_embd.weight")
+        .unwrap_or("model.embed_tokens.weight");
+    let embed = model
+        .initializer(embed_name)
+        .ok_or_else(|| OnnxError::MissingInitializer(embed_name.to_string()))?;
+    ensure_rank(embed.metadata(), 2)?;
+
+    let hidden_dim = model
+        .metadata("hidden_size")
+        .and_then(parse_usize)
+        .unwrap_or(embed.metadata().shape[1]);
+    let vocab_size = model
+        .metadata("vocab_size")
+        .and_then(parse_usize)
+        .unwrap_or(embed.metadata().shape[0]);
+    let num_layers = model
+        .metadata("num_hidden_layers")
+        .and_then(parse_usize)
+        .unwrap_or_else(|| infer_num_layers(model, name_map));
+
+    if num_layers == 0 {
+        return Err(OnnxError::UnsupportedModel(format!(
+            "could not infer any layers for architecture '{}' from ONNX initializer names",
+            architecture
+        )));
+    }
+
+    let w_gate_name = name_map
+        .resolve_layer("blk.0.ffn_gate.weight", 0)
+        .unwrap_or_else(|| "model.layers.0.mlp.gate_proj.weight".to_string());
+
+    let (q_rows, k_rows) = if name_map.has_fused_qkv() {
+        let fused_name = name_map.fused_qkv_weight_name(0).ok_or_else(|| {
+            OnnxError::UnsupportedModel(
+                "architecture claims fused QKV but does not expose a fused tensor name"
+                    .to_string(),
+            )
+        })?;
+        let fused_meta = model
+            .initializer(&fused_name)
+            .ok_or_else(|| OnnxError::MissingInitializer(fused_name.clone()))?
+            .metadata();
+        ensure_rank(fused_meta, 2)?;
+        let total_rows = fused_meta.shape[0];
+        if total_rows % 3 != 0 {
+            return Err(OnnxError::UnsupportedModel(format!(
+                "fused QKV rows {} are not divisible into q/k/v groups",
+                total_rows
+            )));
+        }
+        let q_rows = total_rows / 3;
+        (q_rows, q_rows)
+    } else {
+        let wq_name = name_map
+            .resolve_layer("blk.0.attn_q.weight", 0)
+            .unwrap_or_else(|| "model.layers.0.self_attn.q_proj.weight".to_string());
+        let wk_name = name_map
+            .resolve_layer("blk.0.attn_k.weight", 0)
+            .unwrap_or_else(|| "model.layers.0.self_attn.k_proj.weight".to_string());
+
+        let q_meta = model
+            .initializer(&wq_name)
+            .ok_or_else(|| OnnxError::MissingInitializer(wq_name.clone()))?
+            .metadata();
+        let k_meta = model
+            .initializer(&wk_name)
+            .ok_or_else(|| OnnxError::MissingInitializer(wk_name.clone()))?
+            .metadata();
+
+        ensure_rank(q_meta, 2)?;
+        ensure_rank(k_meta, 2)?;
+        (q_meta.shape[0], k_meta.shape[0])
+    };
+
+    let gate_meta = model
+        .initializer(&w_gate_name)
+        .ok_or_else(|| OnnxError::MissingInitializer(w_gate_name.clone()))?
+        .metadata();
+
+    ensure_rank(gate_meta, 2)?;
+
+    let explicit_head_dim = model.metadata("head_dim").and_then(parse_usize);
+    let explicit_num_heads = model.metadata("num_attention_heads").and_then(parse_usize);
+    let explicit_num_kv_heads = model.metadata("num_key_value_heads").and_then(parse_usize);
+
+    let (num_heads, num_kv_heads, head_dim) = infer_attention_geometry(
+        hidden_dim,
+        q_rows,
+        k_rows,
+        explicit_head_dim,
+        explicit_num_heads,
+        explicit_num_kv_heads,
+    )?;
+
+    let intermediate_dim = model
+        .metadata("intermediate_size")
+        .and_then(parse_usize)
+        .unwrap_or(gate_meta.shape[0]);
+    let max_context_length = model
+        .metadata("max_position_embeddings")
+        .and_then(parse_usize)
+        .unwrap_or(DEFAULT_MAX_CONTEXT_LENGTH);
+    let rope_freq_base = model
+        .metadata("rope_theta")
+        .and_then(parse_f32)
+        .or_else(|| model.metadata("rope_freq_base").and_then(parse_f32))
+        .unwrap_or(DEFAULT_ROPE_FREQ_BASE);
+    let rms_norm_eps = model
+        .metadata("rms_norm_eps")
+        .and_then(parse_f32)
+        .unwrap_or(DEFAULT_RMS_NORM_EPS);
+
+    let arch_metadata = model
+        .metadata("model_type")
+        .or_else(|| model.metadata("architecture"))
+        .unwrap_or(architecture);
+    let profile = find_profile_by_hf(arch_metadata).ok_or_else(|| {
+        OnnxError::UnsupportedModel(format!(
+            "unsupported HuggingFace architecture '{}' for ONNX dense loader",
+            arch_metadata
+        ))
+    })?;
+
+    let arch = map_hf_architecture(arch_metadata).ok_or_else(|| {
+        OnnxError::UnsupportedModel(format!(
+            "could not map architecture '{}' to internal enum",
+            arch_metadata
+        ))
+    })?;
+
+    Ok(ModelConfig {
+        architecture: profile.name.to_string(),
+        arch,
+        num_layers,
+        hidden_dim,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+        intermediate_dim,
+        vocab_size,
+        max_context_length,
+        rope_freq_base,
+        rms_norm_eps,
+        norm_type: profile.norm_type,
+        ffn_type: profile.ffn_type,
+        pos_encoding: match profile.pos_encoding_kind {
+            PosEncodingKind::RoPE => PosEncoding::RoPE {
+                freq_base: rope_freq_base,
+            },
+            PosEncodingKind::Learned => PosEncoding::Learned,
+            PosEncodingKind::PartialRoPE => PosEncoding::PartialRoPE {
+                freq_base: rope_freq_base,
+                rotary_dim: head_dim / 2,
+            },
+            PosEncodingKind::None => PosEncoding::None,
+        },
+        block_style: profile.block_style,
+        has_qkv_bias: profile.has_qkv_bias,
+        has_output_bias: profile.has_output_bias,
+        embedding_scale: profile.has_embedding_scale.then(|| (hidden_dim as f32).sqrt()),
+        activation_quantization: ActivationQuantization::None,
+    })
+}
+
 fn infer_llama_config(model: &ParsedModel) -> Result<ModelConfig> {
     let embed = model
         .initializer("model.embed_tokens.weight")
@@ -585,7 +961,7 @@ fn infer_llama_config(model: &ParsedModel) -> Result<ModelConfig> {
     let num_layers = model
         .metadata("num_hidden_layers")
         .and_then(parse_usize)
-        .unwrap_or_else(|| infer_num_layers(model));
+        .unwrap_or_else(|| infer_num_layers_legacy(model));
 
     if num_layers == 0 {
         return Err(OnnxError::UnsupportedModel(
@@ -695,10 +1071,21 @@ fn infer_llama_config(model: &ParsedModel) -> Result<ModelConfig> {
         has_qkv_bias: false,
         has_output_bias: false,
         embedding_scale: None,
+        activation_quantization: ActivationQuantization::None,
     })
 }
 
-fn infer_num_layers(model: &ParsedModel) -> usize {
+fn infer_num_layers(model: &ParsedModel, name_map: &WeightNameMap) -> usize {
+    let mut seen = BTreeSet::new();
+    for name in model.tensor_names() {
+        if let Some((internal, Some(layer_idx))) = name_map.parse_hf_name(name) {
+            seen.insert(layer_idx);
+        }
+    }
+    seen.last().copied().map(|index| index + 1).unwrap_or_else(|| infer_num_layers_legacy(model))
+}
+
+fn infer_num_layers_legacy(model: &ParsedModel) -> usize {
     let mut seen = BTreeSet::new();
     for name in model.tensor_names() {
         if let Some(index) = parse_layer_index(name) {

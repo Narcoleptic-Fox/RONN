@@ -11,7 +11,8 @@
       "Bash(cargo clippy:*)",
       "Bash(cargo llvm-cov:*)",
       "Bash(git add:*)",
-      "Bash(gh run list:*)"
+      "Bash(gh run list:*)",
+      "Bash(codex exec --dangerously-bypass-approvals-and-sandbox ' *)"
     ],
     "deny": [],
     "ask": []

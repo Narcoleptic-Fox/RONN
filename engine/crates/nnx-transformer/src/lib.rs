@@ -47,6 +47,7 @@ pub mod generate;
 pub mod gpu;
 pub mod loader;
 pub mod model;
+pub(crate) mod quant_utils;
 pub mod sampler;
 pub mod tokenizer;
 pub mod weight_names;

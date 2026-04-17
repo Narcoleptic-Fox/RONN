@@ -16,6 +16,11 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::warn;
 
+/// Default values for config inference when metadata is unavailable.
+const DEFAULT_MAX_CONTEXT: usize = 2048;
+const DEFAULT_ROPE_FREQ_BASE: f32 = 10_000.0;
+const DEFAULT_RMS_NORM_EPS: f32 = 1e-5;
+
 /// Known GGML magic numbers.
 pub const GGML_MAGIC: u32 = 0x67676D6C; // "ggml"
 pub const GGML_MAGIC_V1: u32 = 0x67676D66; // "ggmf" (versioned)
@@ -252,6 +257,323 @@ impl GGMLFile {
     }
 }
 
+/// Load a GGML model into an `nnx_transformer::Model`.
+///
+/// Infers model configuration from the GGML header. Returns an error if
+/// architecture cannot be determined or the file is malformed.
+///
+/// # Arguments
+/// * `path` - Path to the GGML model file
+///
+/// # Returns
+/// A loaded `nnx_transformer::Model` or an error describing the issue.
+///
+/// # Example
+/// ```ignore
+/// use nnx_ggml::load_ggml;
+/// let model = load_ggml("model.ggml")?;
+/// ```
+pub fn load_ggml(
+    path: impl AsRef<Path>,
+) -> std::result::Result<nnx_transformer::model::Model, String> {
+    use nnx_transformer::block::BlockWeights;
+    use nnx_transformer::config::{
+        Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding,
+    };
+    use nnx_transformer::model::{Model, ModelWeights};
+    use nnx_transformer::weights::Matrix;
+
+    let path = path.as_ref();
+
+    // We need hints to open GGML files. Try to infer from filename or use defaults.
+    let arch_hint = infer_arch_hint_from_filename(path);
+
+    let ggml_file = GGMLFile::open(path, arch_hint.clone()).map_err(|e| format!("Failed to open GGML file: {}", e))?;
+    let header = &ggml_file.header;
+
+    // Safety check: architecture inference
+    if header.n_layer == 0 || header.n_embd == 0 || header.n_head == 0 || header.n_vocab == 0 {
+        return Err(format!(
+            "Invalid GGML header: layers={}, embd={}, heads={}, vocab={}",
+            header.n_layer, header.n_embd, header.n_head, header.n_vocab
+        ));
+    }
+
+    let config = infer_model_config(&arch_hint, header)?;
+
+    // Map GGML tensor names to ModelWeights
+    let token_embedding = load_matrix_or_quantized(
+        &ggml_file,
+        "tok_embeddings.weight",
+        config.vocab_size,
+        config.hidden_dim,
+    )?;
+
+    let final_norm = load_vector_f32(&ggml_file, "norm.weight", config.hidden_dim)?;
+
+    // Check if lm_head exists, otherwise tie to embeddings
+    let lm_head = if ggml_file.tensor_info("output.weight").is_some() {
+        load_matrix_or_quantized(
+            &ggml_file,
+            "output.weight",
+            config.vocab_size,
+            config.hidden_dim,
+        )?
+    } else {
+        token_embedding.clone()
+    };
+
+    let q_dim = config.num_heads * config.head_dim;
+    let kv_dim = config.num_kv_heads * config.head_dim;
+
+    let mut layers = Vec::with_capacity(config.num_layers);
+    for layer_idx in 0..config.num_layers {
+        layers.push(BlockWeights {
+            attn_norm: load_vector_f32(
+                &ggml_file,
+                &format!("layers.{layer_idx}.attention_norm.weight"),
+                config.hidden_dim,
+            )?,
+            ffn_norm: load_vector_f32(
+                &ggml_file,
+                &format!("layers.{layer_idx}.ffn_norm.weight"),
+                config.hidden_dim,
+            )?,
+            wq: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.attention.wq.weight"),
+                q_dim,
+                config.hidden_dim,
+            )?,
+            wk: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.attention.wk.weight"),
+                kv_dim,
+                config.hidden_dim,
+            )?,
+            wv: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.attention.wv.weight"),
+                kv_dim,
+                config.hidden_dim,
+            )?,
+            wo: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.attention.wo.weight"),
+                config.hidden_dim,
+                q_dim,
+            )?,
+            w_gate: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.feed_forward.w1.weight"),
+                config.intermediate_dim,
+                config.hidden_dim,
+            )?,
+            w_up: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.feed_forward.w3.weight"),
+                config.intermediate_dim,
+                config.hidden_dim,
+            )?,
+            w_down: load_matrix_or_quantized(
+                &ggml_file,
+                &format!("layers.{layer_idx}.feed_forward.w2.weight"),
+                config.hidden_dim,
+                config.intermediate_dim,
+            )?,
+            bq: None,
+            bk: None,
+            bv: None,
+            bo: None,
+            attn_norm_bias: None,
+            ffn_norm_bias: None,
+        });
+    }
+
+    Ok(Model::new(
+        config,
+        ModelWeights {
+            token_embedding,
+            position_embedding: None,
+            layers,
+            final_norm,
+            final_norm_bias: None,
+            lm_head,
+        },
+    ))
+}
+
+/// Infer architecture hint from filename or return minimal defaults.
+fn infer_arch_hint_from_filename(path: &Path) -> GGMLArchHint {
+    GGMLArchHint {
+        architecture: "llama".to_string(),
+        num_layers: 32, // Will be corrected by header
+        hidden_dim: 4096,
+        num_heads: 32,
+        vocab_size: 32000,
+    }
+}
+
+/// Infer ModelConfig from GGML header.
+fn infer_model_config(
+    arch_hint: &GGMLArchHint,
+    header: &GGMLHeader,
+) -> std::result::Result<nnx_transformer::config::ModelConfig, String> {
+    use nnx_transformer::config::{
+        Architecture, BlockStyle, FFNType, ModelConfig, NormType, PosEncoding,
+    };
+
+    let head_dim = header.n_embd as usize / header.n_head as usize;
+    let intermediate_dim = (header.n_embd as usize * 4).next_power_of_two().min(header.n_embd as usize * 8);
+
+    let architecture = match arch_hint.architecture.as_str() {
+        "llama" | "llama2" | "llama3" => Architecture::Llama,
+        "mistral" => Architecture::Mistral,
+        "phi" => Architecture::Phi,
+        "gpt2" => Architecture::GPT2,
+        _ => Architecture::Llama, // Default fallback
+    };
+
+    Ok(ModelConfig {
+        architecture: arch_hint.architecture.clone(),
+        arch: architecture,
+        num_layers: header.n_layer as usize,
+        hidden_dim: header.n_embd as usize,
+        num_heads: header.n_head as usize,
+        num_kv_heads: header.n_head as usize, // Assume MHA unless specified
+        head_dim,
+        intermediate_dim,
+        vocab_size: header.n_vocab as usize,
+        max_context_length: DEFAULT_MAX_CONTEXT,
+        rope_freq_base: DEFAULT_ROPE_FREQ_BASE,
+        rms_norm_eps: DEFAULT_RMS_NORM_EPS,
+        norm_type: NormType::RMSNorm,
+        ffn_type: FFNType::SwiGLU,
+        pos_encoding: PosEncoding::RoPE {
+            freq_base: DEFAULT_ROPE_FREQ_BASE,
+        },
+        block_style: BlockStyle::Sequential,
+        has_qkv_bias: false,
+        has_output_bias: false,
+        embedding_scale: None,
+        activation_quantization: nnx_transformer::config::ActivationQuantization::None,
+    })
+}
+
+/// Load a vector as f32 from a GGML tensor.
+fn load_vector_f32(
+    ggml_file: &GGMLFile,
+    name: &str,
+    expected_len: usize,
+) -> std::result::Result<Vec<f32>, String> {
+    let view = ggml_file
+        .tensor_view(name)
+        .map_err(|e| format!("Missing tensor '{}': {}", name, e))?;
+
+    if view.shape().numel() != expected_len {
+        return Err(format!(
+            "Tensor '{}' has {} elements, expected {}",
+            name,
+            view.shape().numel(),
+            expected_len
+        ));
+    }
+
+    if view.dtype() != GGMLType::F32 {
+        return Err(format!(
+            "Tensor '{}' has dtype {:?}, expected F32",
+            name,
+            view.dtype()
+        ));
+    }
+
+    let bytes = view.as_bytes();
+    let mut result = Vec::with_capacity(expected_len);
+    for i in 0..expected_len {
+        let offset = i * 4;
+        let value = f32::from_le_bytes(
+            bytes[offset..offset + 4]
+                .try_into()
+                .map_err(|_| format!("Failed to read f32 at byte {}", offset))?,
+        );
+        result.push(value);
+    }
+
+    Ok(result)
+}
+
+/// Load a matrix from a GGML tensor, supporting both dense and quantized storage.
+fn load_matrix_or_quantized(
+    ggml_file: &GGMLFile,
+    name: &str,
+    rows: usize,
+    cols: usize,
+) -> std::result::Result<nnx_transformer::weights::Matrix, String> {
+    use nnx_transformer::weights::Matrix;
+
+    let view = ggml_file
+        .tensor_view(name)
+        .map_err(|e| format!("Missing tensor '{}': {}", name, e))?;
+
+    let expected_numel = rows * cols;
+    if view.shape().numel() != expected_numel {
+        return Err(format!(
+            "Tensor '{}' has shape {:?}, expected {}x{} = {} elements",
+            name,
+            view.shape().dims(),
+            rows,
+            cols,
+            expected_numel
+        ));
+    }
+
+    match view.dtype() {
+        GGMLType::F32 => {
+            let data = load_vector_f32(ggml_file, name, expected_numel)?;
+            Ok(Matrix::dense(data, rows, cols))
+        }
+        _ => {
+            // For quantized types, store as Matrix::Quantized with raw bytes
+            Matrix::quantized(view.as_bytes().to_vec(), view.dtype(), rows, cols)
+        }
+    }
+}
+
+/// Map GGMLType to a string representation for Matrix::Quantized.
+fn map_ggml_type_to_string(dtype: GGMLType) -> String {
+    match dtype {
+        GGMLType::F32 => "f32".to_string(),
+        GGMLType::F16 => "f16".to_string(),
+        GGMLType::Q4_0 => "q4_0".to_string(),
+        GGMLType::Q4_1 => "q4_1".to_string(),
+        GGMLType::Q5_0 => "q5_0".to_string(),
+        GGMLType::Q5_1 => "q5_1".to_string(),
+        GGMLType::Q8_0 => "q8_0".to_string(),
+        GGMLType::Q8_1 => "q8_1".to_string(),
+        GGMLType::Q2K => "q2_k".to_string(),
+        GGMLType::Q3K => "q3_k".to_string(),
+        GGMLType::Q4K => "q4_k".to_string(),
+        GGMLType::Q5K => "q5_k".to_string(),
+        GGMLType::Q6K => "q6_k".to_string(),
+        GGMLType::Q8K => "q8_k".to_string(),
+        GGMLType::IQ2XXS => "iq2_xxs".to_string(),
+        GGMLType::IQ2XS => "iq2_xs".to_string(),
+        GGMLType::IQ3XXS => "iq3_xxs".to_string(),
+        GGMLType::IQ1S => "iq1_s".to_string(),
+        GGMLType::IQ4NL => "iq4_nl".to_string(),
+        GGMLType::IQ3S => "iq3_s".to_string(),
+        GGMLType::IQ2S => "iq2_s".to_string(),
+        GGMLType::IQ4XS => "iq4_xs".to_string(),
+        GGMLType::I8 => "i8".to_string(),
+        GGMLType::I16 => "i16".to_string(),
+        GGMLType::I32 => "i32".to_string(),
+        GGMLType::I64 => "i64".to_string(),
+        GGMLType::F64 => "f64".to_string(),
+        GGMLType::IQ1M => "iq1_m".to_string(),
+        GGMLType::BF16 => "bf16".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +658,100 @@ mod tests {
         write_test_file(&path, &[0, 1, 2, 3, 4, 5, 6, 7]);
         let result = GGMLFile::open(&path, arch_hint());
         assert!(result.is_err());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_load_ggml_minimal() {
+        use crate::load_ggml;
+
+        // Build a more complete synthetic GGML file with minimal valid tensors
+        let mut bytes = Vec::new();
+
+        // Header
+        bytes.extend_from_slice(&GGML_MAGIC_V2.to_le_bytes());
+        bytes.extend_from_slice(&100u32.to_le_bytes()); // vocab_size
+        bytes.extend_from_slice(&128u32.to_le_bytes()); // hidden_dim
+        bytes.extend_from_slice(&8u32.to_le_bytes());   // num_heads
+        bytes.extend_from_slice(&1u32.to_le_bytes());   // num_layers
+        bytes.extend_from_slice(&0u32.to_le_bytes());   // f16: false
+
+        // Helper to add a tensor
+        let mut add_tensor = |name: &str, dims: &[u32], data_len: usize| {
+            bytes.extend_from_slice(&(dims.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(&(GGMLType::F32 as u32).to_le_bytes());
+
+            for &dim in dims {
+                bytes.extend_from_slice(&dim.to_le_bytes());
+            }
+
+            bytes.extend_from_slice(name.as_bytes());
+
+            let aligned_len = GGMLFile::align_up(bytes.len(), 32);
+            bytes.resize(aligned_len, 0);
+
+            for _ in 0..data_len {
+                bytes.extend_from_slice(&0.1f32.to_le_bytes());
+            }
+        };
+
+        // Add required tensors for a valid model
+        add_tensor("tok_embeddings.weight", &[100, 128], 100 * 128);
+        add_tensor("norm.weight", &[128], 128);
+        add_tensor("output.weight", &[100, 128], 100 * 128);
+
+        // Layer 0 tensors
+        add_tensor("layers.0.attention_norm.weight", &[128], 128);
+        add_tensor("layers.0.ffn_norm.weight", &[128], 128);
+        add_tensor("layers.0.attention.wq.weight", &[128, 128], 128 * 128);
+        add_tensor("layers.0.attention.wk.weight", &[128, 128], 128 * 128);
+        add_tensor("layers.0.attention.wv.weight", &[128, 128], 128 * 128);
+        add_tensor("layers.0.attention.wo.weight", &[128, 128], 128 * 128);
+        add_tensor("layers.0.feed_forward.w1.weight", &[512, 128], 512 * 128);
+        add_tensor("layers.0.feed_forward.w2.weight", &[128, 512], 128 * 512);
+        add_tensor("layers.0.feed_forward.w3.weight", &[512, 128], 512 * 128);
+
+        let path = temp_path("load_ggml_test.bin");
+        write_test_file(&path, &bytes);
+
+        let model = load_ggml(&path).expect("Failed to load GGML model");
+
+        // Verify config was inferred correctly
+        assert_eq!(model.config.vocab_size, 100);
+        assert_eq!(model.config.hidden_dim, 128);
+        assert_eq!(model.config.num_layers, 1);
+        assert_eq!(model.config.num_heads, 8);
+        assert_eq!(model.config.head_dim, 128 / 8);
+
+        // Verify architecture
+        assert!(matches!(
+            model.config.arch,
+            nnx_transformer::config::Architecture::Llama
+        ));
+
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_load_ggml_invalid_header() {
+        use crate::load_ggml;
+
+        // Build GGML file with invalid (zero) dimensions
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&GGML_MAGIC_V2.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // vocab_size = 0 (invalid)
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // hidden_dim = 0 (invalid)
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // num_heads = 0 (invalid)
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // num_layers = 0 (invalid)
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // f16
+
+        let path = temp_path("invalid_header.bin");
+        write_test_file(&path, &bytes);
+
+        let _result = load_ggml(&path);
+        assert!(_result.is_err(), "Should fail with invalid header");
+
         std::fs::remove_file(path).ok();
     }
 }

@@ -32,7 +32,9 @@ use crate::paged_kv::{
 };
 use nnx_core::PageId;
 use nnx_core::backend::KernelBackend;
-use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
+use nnx_core::gpu_config::{
+    GpuActivationQuant, GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
+};
 
 // ---------------------------------------------------------------------------
 // GPU weight storage
@@ -883,6 +885,13 @@ impl<R: Runtime> GpuInference<R> {
 
             self.copy_slice(q, h * cfg.head_dim, head_out, 0, cfg.head_dim);
 
+            // Optional Q8_0 activation quantization for Q
+            if cfg.activation_quant == GpuActivationQuant::Q8_0 {
+                let (mut q_scales, mut q_quants) = self.backend.alloc_q8_0_buffers(cfg.head_dim);
+                self.backend.quantize_f32_to_q8_0(head_out, &mut q_scales, &mut q_quants);
+                self.backend.dequantize_q8_0_to_f32(&q_scales, &q_quants, head_out);
+            }
+
             unsafe {
                 crate::attention::attention_scores_kernel::launch::<R>(
                     self.backend.client(),
@@ -901,6 +910,13 @@ impl<R: Runtime> GpuInference<R> {
                     ScalarArg::new(seq_len as u32),
                     ScalarArg::new(scale),
                 );
+            }
+
+            // Optional Q8_0 activation quantization for attention scores
+            if cfg.activation_quant == GpuActivationQuant::Q8_0 {
+                let (mut score_scales, mut score_quants) = self.backend.alloc_q8_0_buffers(seq_len);
+                self.backend.quantize_f32_to_q8_0(&scores, &mut score_scales, &mut score_quants);
+                self.backend.dequantize_q8_0_to_f32(&score_scales, &score_quants, &mut scores);
             }
 
             self.backend.softmax_inplace(&mut scores, 0, seq_len);
@@ -975,6 +991,13 @@ impl<R: Runtime> GpuInference<R> {
 
             self.copy_slice(q, h * cfg.head_dim, head_out, 0, cfg.head_dim);
 
+            // Optional Q8_0 activation quantization for Q
+            if cfg.activation_quant == GpuActivationQuant::Q8_0 {
+                let (mut q_scales, mut q_quants) = self.backend.alloc_q8_0_buffers(cfg.head_dim);
+                self.backend.quantize_f32_to_q8_0(head_out, &mut q_scales, &mut q_quants);
+                self.backend.dequantize_q8_0_to_f32(&q_scales, &q_quants, head_out);
+            }
+
             unsafe {
                 paged_attention_scores_kernel::launch::<R>(
                     self.backend.client(),
@@ -1005,6 +1028,13 @@ impl<R: Runtime> GpuInference<R> {
                     ScalarArg::new(cfg.head_dim as u32),
                     ScalarArg::new(scale),
                 );
+            }
+
+            // Optional Q8_0 activation quantization for attention scores
+            if cfg.activation_quant == GpuActivationQuant::Q8_0 {
+                let (mut score_scales, mut score_quants) = self.backend.alloc_q8_0_buffers(num_tokens);
+                self.backend.quantize_f32_to_q8_0(&scores, &mut score_scales, &mut score_quants);
+                self.backend.dequantize_q8_0_to_f32(&score_scales, &score_quants, &mut scores);
             }
 
             self.backend.softmax_inplace(&mut scores, 0, num_tokens);
@@ -2152,7 +2182,9 @@ impl<R: Runtime> GpuInference<R> {
 mod tests {
     use super::*;
     use cubecl::wgpu::WgpuRuntime;
-    use nnx_core::gpu_config::{GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding};
+    use nnx_core::gpu_config::{
+        GpuActivationQuant, GpuBlockStyle, GpuConfig, GpuFFNType, GpuNormType, GpuPosEncoding,
+    };
 
     fn tiny_gpu_config() -> GpuConfig {
         GpuConfig {
@@ -2172,6 +2204,7 @@ mod tests {
             block_style: GpuBlockStyle::Sequential,
             has_qkv_bias: false,
             has_output_bias: false,
+            activation_quant: GpuActivationQuant::None,
         }
     }
 

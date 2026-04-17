@@ -5,6 +5,7 @@
 
 use crate::block::BlockWeights;
 use crate::config::{ModelConfig, PosEncoding};
+use crate::quant_utils::maybe_quantize_activations;
 use nnx_core::engine::KVStore;
 use nnx_core::error::Result;
 use nnx_kernels::matmul;
@@ -136,6 +137,12 @@ pub fn attention_decode_configurable(
             v[i] += bv[i];
         }
     }
+
+    // Optionally quantize Q, K, V projection outputs before RoPE and cache storage.
+    // This simulates quantization error in the attention pipeline.
+    maybe_quantize_activations(&mut q, 1, q_dim, config.activation_quantization)?;
+    maybe_quantize_activations(&mut k, 1, kv_dim, config.activation_quantization)?;
+    maybe_quantize_activations(&mut v, 1, kv_dim, config.activation_quantization)?;
 
     // Position encoding
     match &config.pos_encoding {
@@ -286,6 +293,11 @@ pub fn attention_prefill_batch_configurable(
             }
         }
     }
+
+    // Optionally quantize Q, K, V projection outputs before RoPE and cache storage.
+    maybe_quantize_activations(&mut q_all, batch_size, q_dim, config.activation_quantization)?;
+    maybe_quantize_activations(&mut k_all, batch_size, kv_dim, config.activation_quantization)?;
+    maybe_quantize_activations(&mut v_all, batch_size, kv_dim, config.activation_quantization)?;
 
     // Step 3: Apply position encoding to each token's Q and K at their
     // absolute positions (start_position + token_idx).
@@ -1353,6 +1365,97 @@ mod tests {
         assert!(
             max_diff < 1e-4,
             "parallel-head prefill differs from sequential by {max_diff}"
+        );
+    }
+
+    #[test]
+    fn test_attention_decode_quantized_matches_dense() {
+        // Verify that Q8_0 activation quantization in attention stays close to dense.
+        // Quantization is applied to Q, K, V projection outputs.
+        let hidden_dim = 32;
+        let num_heads = 4;
+        let num_kv_heads = 4;
+        let head_dim = 8;
+        let intermediate_dim = 64;
+
+        let hidden: Vec<f32> = (0..hidden_dim)
+            .map(|i| ((i % 9) as f32 - 4.0) * 0.17)
+            .collect();
+
+        let weights = BlockWeights::test_no_bias(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+        );
+
+        let config_dense = ModelConfig::test_llama(
+            hidden_dim,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            intermediate_dim,
+            32,
+        );
+
+        let config_quantized = ModelConfig {
+            activation_quantization: crate::config::ActivationQuantization::Q8_0,
+            ..config_dense.clone()
+        };
+
+        // Decode a few tokens with both configs. Accumulate multiple tokens in the cache
+        // so the attention scores distribution becomes non-trivial.
+        let mut cache_dense = LayerCache::new(64, num_kv_heads, head_dim);
+        let mut cache_quantized = LayerCache::new(64, num_kv_heads, head_dim);
+
+        for pos in 0..3 {
+            let _ = attention_decode_configurable(
+                &hidden,
+                &weights,
+                &mut cache_dense,
+                pos,
+                &config_dense,
+            )
+            .unwrap();
+            let _ = attention_decode_configurable(
+                &hidden,
+                &weights,
+                &mut cache_quantized,
+                pos,
+                &config_quantized,
+            )
+            .unwrap();
+        }
+
+        // Capture final outputs for comparison
+        let dense_out = attention_decode_configurable(
+            &hidden,
+            &weights,
+            &mut cache_dense,
+            3,
+            &config_dense,
+        )
+        .unwrap();
+
+        let quantized_out = attention_decode_configurable(
+            &hidden,
+            &weights,
+            &mut cache_quantized,
+            3,
+            &config_quantized,
+        )
+        .unwrap();
+
+        let max_abs_error = dense_out
+            .iter()
+            .zip(quantized_out.iter())
+            .map(|(d, q)| (d - q).abs())
+            .fold(0.0f32, f32::max);
+
+        assert!(
+            max_abs_error < 0.1,
+            "Q8_0 quantized attention drift too large: {max_abs_error} (expected < 0.1)"
         );
     }
 }

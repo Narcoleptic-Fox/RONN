@@ -1293,7 +1293,25 @@ fn probe_output_bias(st: &nnx_safetensors::SafeTensorsFile, name_map: &WeightNam
 }
 
 /// Load a tensor from SafeTensors, converting to f32.
+///
+/// For F16/BF16 non-matrix tensors (vectors, scalars), intentionally materializes
+/// to f32 because these tensors are negligible in memory footprint (<1% of model size)
+/// and compact execution paths for small tensors are deferred as a future optimization.
 fn load_st_tensor(
+    st: &nnx_safetensors::SafeTensorsFile,
+    name: &str,
+    expected_numel: usize,
+) -> Result<Vec<f32>, String> {
+    load_st_compact_vector(st, name, expected_numel)
+}
+
+/// Load a compact vector/scalar tensor from SafeTensors, converting to f32.
+///
+/// This helper explicitly materializes F16/BF16 vectors and scalars to f32 memory.
+/// WHY: Non-matrix tensors (norms, biases, scales) are <1% of total model memory,
+/// so keeping them compact provides negligible memory savings. A compact execution
+/// path for these small tensors is intentionally deferred as a future optimization.
+fn load_st_compact_vector(
     st: &nnx_safetensors::SafeTensorsFile,
     name: &str,
     expected_numel: usize,

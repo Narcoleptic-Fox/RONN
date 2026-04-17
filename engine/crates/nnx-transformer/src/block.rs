@@ -3,11 +3,12 @@
 //! Supports sequential (Llama, GPT-2, Gemma, Qwen) and parallel (Phi) block styles.
 
 use crate::attention;
-use crate::config::{ActivationQuantization, BlockStyle, ModelConfig, NormType};
+use crate::config::{BlockStyle, ModelConfig, NormType};
 use crate::ffn;
+use crate::quant_utils::maybe_quantize_activations;
 use crate::weights::Matrix;
 use nnx_core::engine::KVStore;
-use nnx_core::error::{EngineError, Result};
+use nnx_core::error::Result;
 
 /// Weights for one transformer block.
 pub struct BlockWeights {
@@ -188,23 +189,7 @@ fn apply_norm_batch(
     Ok(())
 }
 
-fn maybe_quantize_activations(
-    activations: &mut [f32],
-    rows: usize,
-    cols: usize,
-    mode: ActivationQuantization,
-) -> Result<()> {
-    match mode {
-        ActivationQuantization::None => Ok(()),
-        ActivationQuantization::Q8_0 => nnx_quant::encode::roundtrip_matrix_in_place(
-            activations,
-            rows,
-            cols,
-            nnx_quant::GGMLType::Q8_0,
-        )
-        .map_err(EngineError::Quantization),
-    }
-}
+
 
 /// Run a single transformer block on one token during decoding.
 ///

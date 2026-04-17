@@ -222,6 +222,7 @@ fn make_test_config(
         has_qkv_bias: false,
         has_output_bias: false,
         embedding_scale: None,
+        activation_quantization: nnx_transformer::config::ActivationQuantization::None,
     }
 }
 
