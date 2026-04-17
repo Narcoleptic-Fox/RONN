@@ -26,14 +26,12 @@ pub(crate) fn maybe_quantize_activations(
 ) -> Result<()> {
     match mode {
         ActivationQuantization::None => Ok(()),
-        ActivationQuantization::Q8_0 => {
-            nnx_quant::encode::roundtrip_matrix_in_place(
-                activations,
-                rows,
-                cols,
-                nnx_quant::GGMLType::Q8_0,
-            )
-            .map_err(EngineError::Quantization)
-        }
+        ActivationQuantization::Q8_0 => nnx_quant::encode::roundtrip_matrix_in_place(
+            activations,
+            rows,
+            cols,
+            nnx_quant::GGMLType::Q8_0,
+        )
+        .map_err(EngineError::Quantization),
     }
 }

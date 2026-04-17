@@ -95,8 +95,6 @@ pub fn ffn_forward_batch(
     }
 }
 
-
-
 /// SwiGLU FFN: gate and up projections computed in parallel, then SiLU + element-wise mul + down.
 pub fn swiglu_ffn(
     hidden: &[f32],
