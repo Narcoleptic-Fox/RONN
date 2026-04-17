@@ -1,170 +1,74 @@
 name: Integration Tests
 
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-  # Allow manual triggering
   workflow_dispatch:
-  # Run nightly for comprehensive testing
   schedule:
-    - cron: '0 2 * * *'  # 2 AM UTC daily
+    - cron: "0 2 * * *"
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUST_TEST_THREADS: 1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-tests-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  integration-tests:
-    name: Integration Tests - ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+  nnx-real-model-nightly:
+    name: NNX Real-Model - ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - name: TinyLlama Q2_K smoke
+            cache_key: nnx-real-model-nightly-tinyllama-q2k-v1
+            model_path: .github/models/tinyllama-1.1b-chat-v1.0.Q2_K.gguf
+            model_url: https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf
+          - name: TinyLlama Q4_K_M fuller
+            cache_key: nnx-real-model-nightly-tinyllama-q4km-v1
+            model_path: .github/models/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
+            model_url: https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-        components: rustfmt, clippy
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Cache Rust dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      - name: Cache GGUF model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.model_path }}
+          key: ${{ matrix.cache_key }}
 
-    - name: Cache ONNX models
-      uses: actions/cache@v4
-      with:
-        path: models/*.onnx
-        key: onnx-models-v1
-        restore-keys: |
-          onnx-models-
+      - name: Download GGUF model
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "$(dirname \"${{ matrix.model_path }}\")"
+          curl -L --fail --retry 3 --retry-all-errors \
+            "${{ matrix.model_url }}" \
+            -o "${{ matrix.model_path }}"
 
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install onnx numpy
+      - name: Run NNX real-model integration harness
+        env:
+          NNX_TEST_MODEL: ${{ matrix.model_path }}
+        run: cargo test -p nnx-transformer --test integration -- --nocapture
 
-    - name: Generate test ONNX models
-      working-directory: scripts
-      continue-on-error: true
-      run: python generate_test_model.py || echo "Model generation skipped"
-
-    - name: Build integration tests
-      continue-on-error: true
-      run: cargo build -p ronn-integration-tests --verbose || echo "Integration tests build skipped"
-
-    - name: Run integration tests
-      continue-on-error: true
-      run: cargo test -p ronn-integration-tests --verbose -- --include-ignored --nocapture || echo "Integration tests skipped"
-      timeout-minutes: 30
-
-    - name: Upload test results
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: integration-test-results-${{ matrix.os }}
-        path: |
-          target/debug/
-          tests/fixtures/expected_outputs/
-
-  integration-tests-quick:
-    name: Quick Integration Tests (ResNet only)
-    runs-on: ubuntu-latest
-    # Run on every PR for quick feedback
-    if: github.event_name == 'pull_request'
-    continue-on-error: true
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Cache models
-      uses: actions/cache@v4
-      with:
-        path: models/*.onnx
-        key: onnx-models-v1
-
-    - name: Generate test models
-      working-directory: scripts
-      continue-on-error: true
-      run: |
-        pip install onnx numpy
-        python generate_test_model.py || echo "Model generation skipped"
-
-    - name: Run ResNet integration tests
-      run: cargo test -p ronn-integration-tests test_resnet -- --include-ignored || echo "ResNet tests failed"
-      continue-on-error: true
-      timeout-minutes: 10
-
-  benchmark:
-    name: Performance Benchmarks
-    runs-on: ubuntu-latest
-    # Only run on main branch and schedule
-    if: github.event_name == 'push' || github.event_name == 'schedule'
-    continue-on-error: true
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Rust
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-
-    - name: Cache models
-      uses: actions/cache@v4
-      with:
-        path: models/*.onnx
-        key: onnx-models-v1
-
-    - name: Generate test models
-      working-directory: scripts
-      continue-on-error: true
-      run: |
-        pip install onnx numpy
-        python generate_test_model.py || echo "Model generation skipped"
-
-    - name: Run performance benchmarks
-      run: cargo test -p ronn-integration-tests performance -- --include-ignored --nocapture || echo "Performance benchmarks failed"
-      continue-on-error: true
-      timeout-minutes: 20
-
-    - name: Store benchmark results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: benchmark-results
-        path: target/criterion/
+      - name: Upload integration logs on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: nnx-real-model-${{ matrix.name }}
+          path: target/debug/deps/

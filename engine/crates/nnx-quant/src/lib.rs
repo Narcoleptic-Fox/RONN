@@ -6,6 +6,7 @@
 
 pub mod blocks;
 pub mod dequant;
+pub mod encode;
 pub mod types;
 
 pub use types::GGMLType;

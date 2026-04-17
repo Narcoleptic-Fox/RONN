@@ -689,6 +689,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: false,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let weights = BlockWeights::test_with_bias(
@@ -766,6 +767,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: true,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         // Use varied weights so different head dims produce different Q/K values
@@ -908,6 +910,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: true,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let weights = BlockWeights::test_with_bias(
@@ -960,6 +963,7 @@ mod tests {
             has_qkv_bias: false,
             has_output_bias: false,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         }
     }
 

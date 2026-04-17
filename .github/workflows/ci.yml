@@ -10,140 +10,180 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+
 jobs:
   # Fast checks that fail quickly
   check:
     name: Check
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Check workspace
-      run: cargo check --workspace
+      - name: Check workspace
+        run: cargo check --workspace
 
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
-    - name: Check formatting
-      run: cargo fmt --all -- --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Run Clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        rust: [ stable ]
         # Note: nightly + --all-features removed because it requires CUDA
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: ${{ matrix.rust }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
-      with:
-        key: ${{ matrix.os }}-${{ matrix.rust }}
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.rust }}
 
-    # Install Python for ONNX fixture generation
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
-        cache: 'pip'
+      # Install Python for ONNX fixture generation
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
 
-    - name: Install Python dependencies
-      run: pip install onnx numpy
+      - name: Install Python dependencies
+        run: pip install onnx numpy
 
-    - name: Generate ONNX test fixtures
-      run: python crates/ronn-api/tests/fixtures/create_fixtures.py
+      - name: Generate ONNX test fixtures
+        run: python crates/ronn-api/tests/fixtures/create_fixtures.py
 
-    - name: Build workspace
-      run: cargo build --workspace ${{ matrix.features }}
+      - name: Build workspace
+        run: cargo build --workspace
 
-    - name: Run unit and integration tests
-      run: cargo test --workspace ${{ matrix.features }}
+      - name: Run unit and integration tests
+        run: cargo test --workspace
 
-    - name: Run doc tests
-      run: cargo test --doc --workspace ${{ matrix.features }}
+      - name: Run doc tests
+        run: cargo test --doc --workspace
+
+  nnx-real-model-smoke:
+    name: NNX Real-Model Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      RUST_TEST_THREADS: 1
+      NNX_TEST_MODEL: .github/models/tinyllama-1.1b-chat-v1.0.Q2_K.gguf
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache smoke test model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.NNX_TEST_MODEL }}
+          key: nnx-real-model-smoke-tinyllama-q2k-v1
+
+      - name: Download TinyLlama GGUF smoke model
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "$(dirname \"$NNX_TEST_MODEL\")"
+          curl -L --fail --retry 3 --retry-all-errors \
+            https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf \
+            -o "$NNX_TEST_MODEL"
+
+      - name: Run NNX real-model integration harness
+        run: cargo test -p nnx-transformer --test integration -- --nocapture
 
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: llvm-tools-preview
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
 
-    - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.12'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-    - name: Install Python dependencies
-      run: pip install onnx numpy
+      - name: Install Python dependencies
+        run: pip install onnx numpy
 
-    - name: Generate ONNX test fixtures
-      run: python crates/ronn-api/tests/fixtures/create_fixtures.py
+      - name: Generate ONNX test fixtures
+        run: python crates/ronn-api/tests/fixtures/create_fixtures.py
 
-    - name: Generate coverage
-      run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
-    - name: Upload to codecov.io
-      uses: codecov/codecov-action@v3
-      continue-on-error: true
-      with:
-        files: lcov.info
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v3
+        continue-on-error: true
+        with:
+          files: lcov.info
 
   benchmark:
     name: Performance Benchmarks
@@ -151,66 +191,67 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     continue-on-error: true
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Run benchmarks
-      run: cargo bench --workspace --no-fail-fast || echo "Some benchmarks failed but continuing"
-      continue-on-error: true
+      - name: Run benchmarks
+        run: cargo bench --workspace --no-fail-fast || echo "Some benchmarks failed but
+          continuing"
+        continue-on-error: true
 
-    - name: Store benchmark results
-      uses: benchmark-action/github-action-benchmark@v1
-      if: success()
-      continue-on-error: true
-      with:
-        tool: 'cargo'
-        output-file-path: target/criterion/*/base/benchmark.json
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        auto-push: true
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        if: success()
+        continue-on-error: true
+        with:
+          tool: "cargo"
+          output-file-path: target/criterion/*/base/benchmark.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Run security audit
-      uses: EmbarkStudios/cargo-deny-action@v1
-      continue-on-error: true
+      - name: Run security audit
+        uses: EmbarkStudios/cargo-deny-action@v1
+        continue-on-error: true
 
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache dependencies
-      uses: Swatinem/rust-cache@v2
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
-    - name: Build documentation
-      run: cargo doc --workspace --no-deps
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps
 
-    - name: Deploy documentation
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: peaceiris/actions-gh-pages@v3
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ./target/doc
+      - name: Deploy documentation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc

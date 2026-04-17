@@ -8,4 +8,4 @@
 
 pub mod loader;
 
-pub use loader::GGMLFile;
+pub use loader::{GGMLArchHint, GGMLFile, GGMLHeader, GGMLTensorInfo, GGMLTensorView};

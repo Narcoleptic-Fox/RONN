@@ -405,9 +405,10 @@ pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result
 
     let config = infer_config_from_safetensors_path(path, &st)?;
     config.validate()?;
+    let name_map = WeightNameMap::from_architecture(config.arch.clone());
 
     if memory_budget > 0 {
-        let estimated = estimate_safetensors_memory(&st, &config);
+        let estimated = estimate_safetensors_memory(&st, &config, &name_map);
         if estimated > memory_budget {
             return Err(format!(
                 "model requires ~{:.1} GB but memory budget is {:.1} GB",
@@ -428,7 +429,6 @@ pub fn load_safetensors_with_budget(path: &Path, memory_budget: usize) -> Result
         config.vocab_size,
     );
 
-    let name_map = WeightNameMap::from_architecture(config.arch.clone());
     let weights = load_safetensors_weights(&st, &config, &name_map)?;
     Ok(Model::new(config, weights))
 }
@@ -464,8 +464,12 @@ fn load_safetensors_sharded(
     let index_path = dir.join("model.safetensors.index.json");
     let config = infer_config_from_safetensors_path(&index_path, &first_st)?;
     config.validate()?;
+    let name_map = WeightNameMap::from_architecture(config.arch.clone());
 
     if memory_budget > 0 {
+        let fused_qkv_weights: std::collections::HashSet<String> = (0..config.num_layers)
+            .filter_map(|layer| name_map.fused_qkv_weight_name(layer))
+            .collect();
         let estimated: usize = shard_idx
             .tensor_to_file
             .keys()
@@ -473,9 +477,19 @@ fn load_safetensors_sharded(
                 let shard = shard_idx.tensor_to_file.get(name)?;
                 let st = SafeTensorsFile::open(shard).ok()?;
                 let info = st.tensor_info(name)?;
-                Some(info.shape.numel() * std::mem::size_of::<f32>())
+                Some(estimate_loaded_st_tensor_bytes(
+                    name,
+                    info,
+                    &fused_qkv_weights,
+                ))
             })
             .sum();
+        let estimated = estimated
+            + 2 * config.num_layers
+                * config.max_context_length
+                * config.num_kv_heads
+                * config.head_dim
+                * 4;
         if estimated > memory_budget {
             return Err(format!(
                 "model requires ~{:.1} GB but memory budget is {:.1} GB",
@@ -504,7 +518,6 @@ fn load_safetensors_sharded(
         shard_cache.insert(shard_path.clone(), st);
     }
 
-    let name_map = WeightNameMap::from_architecture(config.arch.clone());
     let loader = ShardedTensorLoader::new(&shard_cache, shard_idx);
     let weights = load_safetensors_weights_sharded(&loader, &config, &name_map)?;
     Ok(Model::new(config, weights))
@@ -583,6 +596,7 @@ fn infer_config_from_safetensors(
         has_qkv_bias: false,
         has_output_bias: false,
         embedding_scale: None,
+        activation_quantization: crate::config::ActivationQuantization::None,
     })
 }
 
@@ -708,6 +722,7 @@ fn infer_config_from_adjacent_config(
         has_qkv_bias,
         has_output_bias,
         embedding_scale,
+        activation_quantization: crate::config::ActivationQuantization::None,
     }))
 }
 
@@ -724,21 +739,18 @@ fn load_safetensors_weights(
     let embed_name = name_map
         .resolve_global("token_embd.weight")
         .unwrap_or("model.embed_tokens.weight");
-    let token_embedding = Matrix::dense(
-        load_st_tensor(st, embed_name, config.vocab_size * config.hidden_dim)?,
-        config.vocab_size,
-        config.hidden_dim,
-    );
+    let token_embedding = load_st_matrix(st, embed_name, config.vocab_size, config.hidden_dim)?;
     let position_embedding = match config.pos_encoding {
         crate::config::PosEncoding::Learned => {
             let pos_name = name_map
                 .resolve_global("pos_embd.weight")
                 .unwrap_or("transformer.wpe.weight");
-            Some(Matrix::dense(
-                load_st_tensor(st, pos_name, config.max_context_length * config.hidden_dim)?,
+            Some(load_st_matrix(
+                st,
+                pos_name,
                 config.max_context_length,
                 config.hidden_dim,
-            ))
+            )?)
         }
         _ => None,
     };
@@ -780,11 +792,7 @@ fn load_safetensors_weights(
         .resolve_global("output.weight")
         .unwrap_or("lm_head.weight");
     let lm_head = if st.tensor_info(lm_head_name).is_some() {
-        Matrix::dense(
-            load_st_tensor(st, lm_head_name, config.vocab_size * config.hidden_dim)?,
-            config.vocab_size,
-            config.hidden_dim,
-        )
+        load_st_matrix(st, lm_head_name, config.vocab_size, config.hidden_dim)?
     } else {
         warn!(
             "{} not found, using embed_tokens (tied embeddings)",
@@ -846,6 +854,26 @@ impl<'a> ShardedTensorLoader<'a> {
         load_st_tensor(st, name, expected_numel)
     }
 
+    fn load_matrix(&self, name: &str, rows: usize, cols: usize) -> Result<Matrix, String> {
+        let st = self
+            .shard_for(name)
+            .ok_or_else(|| format!("tensor '{}' not found in any shard", name))?;
+        load_st_matrix(st, name, rows, cols)
+    }
+
+    fn load_fused_qkv_matrices(
+        &self,
+        name: &str,
+        q_dim: usize,
+        kv_dim: usize,
+        hidden_dim: usize,
+    ) -> Result<(Matrix, Matrix, Matrix), String> {
+        let st = self
+            .shard_for(name)
+            .ok_or_else(|| format!("tensor '{}' not found in any shard", name))?;
+        load_st_fused_qkv_matrices(st, name, q_dim, kv_dim, hidden_dim)
+    }
+
     fn try_load_tensor(&self, name: &str, expected_numel: usize) -> Option<Vec<f32>> {
         let st = self.shard_for(name)?;
         load_st_tensor(st, name, expected_numel).ok()
@@ -867,21 +895,13 @@ fn load_safetensors_weights_sharded(
     let embed_name = name_map
         .resolve_global("token_embd.weight")
         .unwrap_or("model.embed_tokens.weight");
-    let token_embedding = Matrix::dense(
-        loader.load_tensor(embed_name, config.vocab_size * config.hidden_dim)?,
-        config.vocab_size,
-        config.hidden_dim,
-    );
+    let token_embedding = loader.load_matrix(embed_name, config.vocab_size, config.hidden_dim)?;
     let position_embedding = match config.pos_encoding {
         crate::config::PosEncoding::Learned => {
             let pos_name = name_map
                 .resolve_global("pos_embd.weight")
                 .unwrap_or("transformer.wpe.weight");
-            Some(Matrix::dense(
-                loader.load_tensor(pos_name, config.max_context_length * config.hidden_dim)?,
-                config.max_context_length,
-                config.hidden_dim,
-            ))
+            Some(loader.load_matrix(pos_name, config.max_context_length, config.hidden_dim)?)
         }
         _ => None,
     };
@@ -916,11 +936,7 @@ fn load_safetensors_weights_sharded(
         .resolve_global("output.weight")
         .unwrap_or("lm_head.weight");
     let lm_head = if loader.tensor_exists(lm_head_name) {
-        Matrix::dense(
-            loader.load_tensor(lm_head_name, config.vocab_size * config.hidden_dim)?,
-            config.vocab_size,
-            config.hidden_dim,
-        )
+        loader.load_matrix(lm_head_name, config.vocab_size, config.hidden_dim)?
     } else {
         warn!(
             "{} not found in shards, using embed_tokens (tied embeddings)",
@@ -949,6 +965,14 @@ fn load_safetensors_weights_sharded(
 /// single-file and multi-shard cases without duplicating logic.
 trait TensorSource {
     fn load_tensor(&self, name: &str, expected_numel: usize) -> Result<Vec<f32>, String>;
+    fn load_matrix(&self, name: &str, rows: usize, cols: usize) -> Result<Matrix, String>;
+    fn load_fused_qkv_matrices(
+        &self,
+        name: &str,
+        q_dim: usize,
+        kv_dim: usize,
+        hidden_dim: usize,
+    ) -> Result<(Matrix, Matrix, Matrix), String>;
     fn try_load_tensor(&self, name: &str, expected_numel: usize) -> Option<Vec<f32>>;
     fn tensor_exists(&self, name: &str) -> bool;
 }
@@ -963,6 +987,20 @@ impl<'a> TensorSource for SingleFileTensorSource<'a> {
         load_st_tensor(self.st, name, expected_numel)
     }
 
+    fn load_matrix(&self, name: &str, rows: usize, cols: usize) -> Result<Matrix, String> {
+        load_st_matrix(self.st, name, rows, cols)
+    }
+
+    fn load_fused_qkv_matrices(
+        &self,
+        name: &str,
+        q_dim: usize,
+        kv_dim: usize,
+        hidden_dim: usize,
+    ) -> Result<(Matrix, Matrix, Matrix), String> {
+        load_st_fused_qkv_matrices(self.st, name, q_dim, kv_dim, hidden_dim)
+    }
+
     fn try_load_tensor(&self, name: &str, expected_numel: usize) -> Option<Vec<f32>> {
         try_load_st_tensor(self.st, name, expected_numel)
     }
@@ -974,15 +1012,29 @@ impl<'a> TensorSource for SingleFileTensorSource<'a> {
 
 impl<'a> TensorSource for ShardedTensorLoader<'a> {
     fn load_tensor(&self, name: &str, expected_numel: usize) -> Result<Vec<f32>, String> {
-        self.load_tensor(name, expected_numel)
+        ShardedTensorLoader::load_tensor(self, name, expected_numel)
+    }
+
+    fn load_matrix(&self, name: &str, rows: usize, cols: usize) -> Result<Matrix, String> {
+        ShardedTensorLoader::load_matrix(self, name, rows, cols)
+    }
+
+    fn load_fused_qkv_matrices(
+        &self,
+        name: &str,
+        q_dim: usize,
+        kv_dim: usize,
+        hidden_dim: usize,
+    ) -> Result<(Matrix, Matrix, Matrix), String> {
+        ShardedTensorLoader::load_fused_qkv_matrices(self, name, q_dim, kv_dim, hidden_dim)
     }
 
     fn try_load_tensor(&self, name: &str, expected_numel: usize) -> Option<Vec<f32>> {
-        self.try_load_tensor(name, expected_numel)
+        ShardedTensorLoader::try_load_tensor(self, name, expected_numel)
     }
 
     fn tensor_exists(&self, name: &str) -> bool {
-        self.tensor_exists(name)
+        ShardedTensorLoader::tensor_exists(self, name)
     }
 }
 
@@ -1066,11 +1118,7 @@ fn load_block_weights_hf(
 
     // Output projection
     let wo_name = hf_name(&format!("blk.{layer}.attn_output.weight"));
-    let wo = Matrix::dense(
-        src.load_tensor(&wo_name, config.hidden_dim * q_dim)?,
-        config.hidden_dim,
-        q_dim,
-    );
+    let wo = src.load_matrix(&wo_name, config.hidden_dim, q_dim)?;
     let bo = if config.has_output_bias {
         let bo_name = hf_name(&format!("blk.{layer}.attn_output.bias"));
         src.try_load_tensor(&bo_name, config.hidden_dim)
@@ -1120,25 +1168,13 @@ fn load_split_qkv(
     String,
 > {
     let wq_name = hf_name(&format!("blk.{layer}.attn_q.weight"));
-    let wq = Matrix::dense(
-        src.load_tensor(&wq_name, q_dim * config.hidden_dim)?,
-        q_dim,
-        config.hidden_dim,
-    );
+    let wq = src.load_matrix(&wq_name, q_dim, config.hidden_dim)?;
 
     let wk_name = hf_name(&format!("blk.{layer}.attn_k.weight"));
-    let wk = Matrix::dense(
-        src.load_tensor(&wk_name, kv_dim * config.hidden_dim)?,
-        kv_dim,
-        config.hidden_dim,
-    );
+    let wk = src.load_matrix(&wk_name, kv_dim, config.hidden_dim)?;
 
     let wv_name = hf_name(&format!("blk.{layer}.attn_v.weight"));
-    let wv = Matrix::dense(
-        src.load_tensor(&wv_name, kv_dim * config.hidden_dim)?,
-        kv_dim,
-        config.hidden_dim,
-    );
+    let wv = src.load_matrix(&wv_name, kv_dim, config.hidden_dim)?;
 
     let (bq, bk, bv) = if config.has_qkv_bias {
         let bq = src.try_load_tensor(&hf_name(&format!("blk.{layer}.attn_q.bias")), q_dim);
@@ -1175,14 +1211,8 @@ fn load_fused_qkv(
         format!("architecture claims fused QKV but no weight pattern at layer {layer}")
     })?;
 
-    let fused_numel = (q_dim + kv_dim + kv_dim) * config.hidden_dim;
-    let fused = src.load_tensor(&fused_weight_name, fused_numel)?;
-    let (q_data, k_data, v_data) =
-        split_fused_qkv_weight(&fused, q_dim, kv_dim, config.hidden_dim)?;
-
-    let wq = Matrix::dense(q_data, q_dim, config.hidden_dim);
-    let wk = Matrix::dense(k_data, kv_dim, config.hidden_dim);
-    let wv = Matrix::dense(v_data, kv_dim, config.hidden_dim);
+    let (wq, wk, wv) =
+        src.load_fused_qkv_matrices(&fused_weight_name, q_dim, kv_dim, config.hidden_dim)?;
 
     let (bq, bk, bv) = if config.has_qkv_bias {
         if let Some(bias_name) = name_map.fused_qkv_bias_name(layer) {
@@ -1222,9 +1252,9 @@ fn load_ffn_weights_hf(
             let up_name = hf_name(&format!("blk.{layer}.ffn_up.weight"));
             let down_name = hf_name(&format!("blk.{layer}.ffn_down.weight"));
 
-            let w_gate = Matrix::dense(src.load_tensor(&gate_name, inter * hidden)?, inter, hidden);
-            let w_up = Matrix::dense(src.load_tensor(&up_name, inter * hidden)?, inter, hidden);
-            let w_down = Matrix::dense(src.load_tensor(&down_name, hidden * inter)?, hidden, inter);
+            let w_gate = src.load_matrix(&gate_name, inter, hidden)?;
+            let w_up = src.load_matrix(&up_name, inter, hidden)?;
+            let w_down = src.load_matrix(&down_name, hidden, inter)?;
             Ok((w_gate, w_up, w_down))
         }
         FFNType::GELU => {
@@ -1233,10 +1263,10 @@ fn load_ffn_weights_hf(
             let fc1_name = hf_name(&format!("blk.{layer}.ffn_gate.weight"));
             let fc2_name = hf_name(&format!("blk.{layer}.ffn_down.weight"));
 
-            let w_gate = Matrix::dense(src.load_tensor(&fc1_name, inter * hidden)?, inter, hidden);
+            let w_gate = src.load_matrix(&fc1_name, inter, hidden)?;
             // w_up is unused for GELU FFN; keep as empty placeholder for struct consistency.
             let w_up = Matrix::dense(Vec::new(), 0, hidden);
-            let w_down = Matrix::dense(src.load_tensor(&fc2_name, hidden * inter)?, hidden, inter);
+            let w_down = src.load_matrix(&fc2_name, hidden, inter)?;
             Ok((w_gate, w_up, w_down))
         }
     }
@@ -1323,6 +1353,99 @@ fn try_load_st_tensor(
     load_st_tensor(st, name, expected_numel).ok()
 }
 
+fn compact_safetensors_matrix_dtype(dtype: nnx_core::dtype::DType) -> Option<GGMLType> {
+    use nnx_core::dtype::DType;
+
+    match dtype {
+        DType::F16 => Some(GGMLType::F16),
+        DType::BF16 => Some(GGMLType::BF16),
+        _ => None,
+    }
+}
+
+fn load_st_matrix(
+    st: &nnx_safetensors::SafeTensorsFile,
+    name: &str,
+    rows: usize,
+    cols: usize,
+) -> Result<Matrix, String> {
+    let expected_numel = rows * cols;
+    let view = st
+        .tensor_view(name)
+        .map_err(|e| format!("failed to load tensor {}: {}", name, e))?;
+
+    let numel = view.shape().numel();
+    if numel != expected_numel {
+        return Err(format!(
+            "tensor {} has {} elements, expected {}",
+            name, numel, expected_numel
+        ));
+    }
+
+    if let Some(dtype) = compact_safetensors_matrix_dtype(view.dtype()) {
+        return Matrix::quantized(view.as_bytes().to_vec(), dtype, rows, cols);
+    }
+
+    Ok(Matrix::dense(
+        load_st_tensor(st, name, expected_numel)?,
+        rows,
+        cols,
+    ))
+}
+
+fn load_st_fused_qkv_matrices(
+    st: &nnx_safetensors::SafeTensorsFile,
+    name: &str,
+    q_dim: usize,
+    kv_dim: usize,
+    hidden_dim: usize,
+) -> Result<(Matrix, Matrix, Matrix), String> {
+    let expected_numel = (q_dim + kv_dim + kv_dim) * hidden_dim;
+    let view = st
+        .tensor_view(name)
+        .map_err(|e| format!("failed to load tensor {}: {}", name, e))?;
+
+    let numel = view.shape().numel();
+    if numel != expected_numel {
+        return Err(format!(
+            "tensor {} has {} elements, expected {}",
+            name, numel, expected_numel
+        ));
+    }
+
+    if let Some(dtype) = compact_safetensors_matrix_dtype(view.dtype()) {
+        let row_bytes = crate::weights::row_bytes(dtype, hidden_dim)?;
+        let q_bytes = q_dim * row_bytes;
+        let k_bytes = kv_dim * row_bytes;
+        let v_bytes = kv_dim * row_bytes;
+        let bytes = view.as_bytes();
+
+        let wq = Matrix::quantized(bytes[..q_bytes].to_vec(), dtype, q_dim, hidden_dim)?;
+        let wk = Matrix::quantized(
+            bytes[q_bytes..q_bytes + k_bytes].to_vec(),
+            dtype,
+            kv_dim,
+            hidden_dim,
+        )?;
+        let wv = Matrix::quantized(
+            bytes[q_bytes + k_bytes..q_bytes + k_bytes + v_bytes].to_vec(),
+            dtype,
+            kv_dim,
+            hidden_dim,
+        )?;
+        return Ok((wq, wk, wv));
+    }
+
+    let fused = load_st_tensor(st, name, expected_numel)?;
+    let (q_data, k_data, v_data) = split_fused_qkv_weight(&fused, q_dim, kv_dim, hidden_dim)?;
+
+    Ok((
+        Matrix::dense(q_data, q_dim, hidden_dim),
+        Matrix::dense(k_data, kv_dim, hidden_dim),
+        Matrix::dense(v_data, kv_dim, hidden_dim),
+    ))
+}
+
 // ============================================================
 // Memory budget estimation
 // ============================================================
@@ -1343,11 +1466,15 @@ pub fn estimate_memory(gguf: &GGUFFile, config: &ModelConfig) -> usize {
 fn estimate_safetensors_memory(
     st: &nnx_safetensors::SafeTensorsFile,
     config: &ModelConfig,
+    name_map: &WeightNameMap,
 ) -> usize {
+    let fused_qkv_weights: std::collections::HashSet<String> = (0..config.num_layers)
+        .filter_map(|layer| name_map.fused_qkv_weight_name(layer))
+        .collect();
     let mut total = 0usize;
     for name in st.tensor_names() {
         if let Some(info) = st.tensor_info(name) {
-            total += info.shape.numel() * std::mem::size_of::<f32>();
+            total += estimate_loaded_st_tensor_bytes(name, info, &fused_qkv_weights);
         }
     }
     total += 2
@@ -1357,6 +1484,22 @@ fn estimate_safetensors_memory(
         * config.head_dim
         * 4;
     total
+}
+
+fn estimate_loaded_st_tensor_bytes(
+    name: &str,
+    info: &nnx_safetensors::loader::TensorInfo,
+    fused_qkv_weights: &std::collections::HashSet<String>,
+) -> usize {
+    let numel = info.shape.numel();
+    let is_matrix = info.shape.dims().len() >= 2;
+    if is_matrix && compact_safetensors_matrix_dtype(info.dtype).is_some() {
+        numel * info.dtype.size_bytes()
+    } else if fused_qkv_weights.contains(name) {
+        numel * std::mem::size_of::<f32>()
+    } else {
+        numel * std::mem::size_of::<f32>()
+    }
 }
 
 /// Load a GGUF model with memory budget enforcement.
@@ -1891,6 +2034,218 @@ mod tests {
             model.weights.position_embedding.is_some(),
             "GPT-2 checkpoints should load learned position embeddings"
         );
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_f16_safetensors_matrices_stay_compact_and_fit_budget() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nnx_loader_f16_compact_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let st_path = temp_dir.join("model.safetensors");
+        let config_path = temp_dir.join("config.json");
+
+        let tensors = [
+            ("model.embed_tokens.weight", "F16", [16usize, 8].as_slice()),
+            (
+                "model.layers.0.input_layernorm.weight",
+                "F16",
+                [8usize].as_slice(),
+            ),
+            (
+                "model.layers.0.post_attention_layernorm.weight",
+                "F16",
+                [8usize].as_slice(),
+            ),
+            (
+                "model.layers.0.self_attn.q_proj.weight",
+                "F16",
+                [8usize, 8].as_slice(),
+            ),
+            (
+                "model.layers.0.self_attn.k_proj.weight",
+                "F16",
+                [8usize, 8].as_slice(),
+            ),
+            (
+                "model.layers.0.self_attn.v_proj.weight",
+                "F16",
+                [8usize, 8].as_slice(),
+            ),
+            (
+                "model.layers.0.self_attn.o_proj.weight",
+                "F16",
+                [8usize, 8].as_slice(),
+            ),
+            (
+                "model.layers.0.mlp.gate_proj.weight",
+                "F16",
+                [16usize, 8].as_slice(),
+            ),
+            (
+                "model.layers.0.mlp.up_proj.weight",
+                "F16",
+                [16usize, 8].as_slice(),
+            ),
+            (
+                "model.layers.0.mlp.down_proj.weight",
+                "F16",
+                [8usize, 16].as_slice(),
+            ),
+            ("model.norm.weight", "F16", [8usize].as_slice()),
+            ("lm_head.weight", "F16", [16usize, 8].as_slice()),
+        ];
+        write_test_file(&st_path, &build_safetensors_bytes(&tensors));
+
+        let config_json = serde_json::json!({
+            "architectures": ["LlamaForCausalLM"],
+            "hidden_size": 8,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 2,
+            "intermediate_size": 16,
+            "vocab_size": 16,
+            "max_position_embeddings": 32,
+            "rope_theta": 10000.0,
+            "rms_norm_eps": 1e-5
+        });
+        write_test_file(
+            &config_path,
+            serde_json::to_string(&config_json).unwrap().as_bytes(),
+        );
+
+        let model = load_safetensors_with_budget(&st_path, 4_500)
+            .expect("compact F16 model should fit the budget");
+
+        match &model.weights.token_embedding {
+            Matrix::Quantized { dtype, data, .. } => {
+                assert_eq!(*dtype, GGMLType::F16);
+                assert_eq!(data.len(), 16 * 8 * 2);
+            }
+            other => panic!("expected compact token embedding, got {:?}", other),
+        }
+
+        match &model.weights.layers[0].wq {
+            Matrix::Quantized { dtype, data, .. } => {
+                assert_eq!(*dtype, GGMLType::F16);
+                assert_eq!(data.len(), 8 * 8 * 2);
+            }
+            other => panic!("expected compact Q projection, got {:?}", other),
+        }
+
+        std::fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    #[test]
+    fn test_f16_fused_qkv_safetensors_stay_compact_and_fit_budget() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nnx_loader_f16_fused_qkv_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let st_path = temp_dir.join("model.safetensors");
+        let config_path = temp_dir.join("config.json");
+
+        let tensors = [
+            ("transformer.wte.weight", "F16", [16usize, 8].as_slice()),
+            ("transformer.wpe.weight", "F16", [32usize, 8].as_slice()),
+            ("transformer.h.0.ln_1.weight", "F16", [8usize].as_slice()),
+            ("transformer.h.0.ln_1.bias", "F16", [8usize].as_slice()),
+            ("transformer.h.0.ln_2.weight", "F16", [8usize].as_slice()),
+            ("transformer.h.0.ln_2.bias", "F16", [8usize].as_slice()),
+            (
+                "transformer.h.0.attn.c_attn.weight",
+                "F16",
+                [24usize, 8].as_slice(),
+            ),
+            (
+                "transformer.h.0.attn.c_attn.bias",
+                "F16",
+                [24usize].as_slice(),
+            ),
+            (
+                "transformer.h.0.attn.c_proj.weight",
+                "F16",
+                [8usize, 8].as_slice(),
+            ),
+            (
+                "transformer.h.0.attn.c_proj.bias",
+                "F16",
+                [8usize].as_slice(),
+            ),
+            (
+                "transformer.h.0.mlp.c_fc.weight",
+                "F16",
+                [16usize, 8].as_slice(),
+            ),
+            (
+                "transformer.h.0.mlp.c_proj.weight",
+                "F16",
+                [8usize, 16].as_slice(),
+            ),
+            ("transformer.ln_f.weight", "F16", [8usize].as_slice()),
+            ("transformer.ln_f.bias", "F16", [8usize].as_slice()),
+            ("lm_head.weight", "F16", [16usize, 8].as_slice()),
+        ];
+        write_test_file(&st_path, &build_safetensors_bytes(&tensors));
+
+        let config_json = serde_json::json!({
+            "architectures": ["GPT2LMHeadModel"],
+            "hidden_size": 8,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "intermediate_size": 16,
+            "n_head": 2,
+            "n_embd": 8,
+            "n_layer": 1,
+            "n_positions": 32,
+            "n_ctx": 32,
+            "vocab_size": 16,
+            "max_position_embeddings": 32,
+            "layer_norm_epsilon": 1e-5
+        });
+        write_test_file(
+            &config_path,
+            serde_json::to_string(&config_json).unwrap().as_bytes(),
+        );
+
+        let model = load_safetensors_with_budget(&st_path, 5_000)
+            .expect("compact fused-QKV F16 model should fit the budget");
+
+        match &model.weights.layers[0].wq {
+            Matrix::Quantized { dtype, data, .. } => {
+                assert_eq!(*dtype, GGMLType::F16);
+                assert_eq!(data.len(), 8 * 8 * 2);
+            }
+            other => panic!("expected compact fused Q projection, got {:?}", other),
+        }
+
+        match &model.weights.layers[0].wk {
+            Matrix::Quantized { dtype, data, .. } => {
+                assert_eq!(*dtype, GGMLType::F16);
+                assert_eq!(data.len(), 8 * 8 * 2);
+            }
+            other => panic!("expected compact fused K projection, got {:?}", other),
+        }
+
+        match &model.weights.layers[0].wv {
+            Matrix::Quantized { dtype, data, .. } => {
+                assert_eq!(*dtype, GGMLType::F16);
+                assert_eq!(data.len(), 8 * 8 * 2);
+            }
+            other => panic!("expected compact fused V projection, got {:?}", other),
+        }
 
         std::fs::remove_dir_all(&temp_dir).ok();
     }

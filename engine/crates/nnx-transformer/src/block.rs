@@ -3,11 +3,11 @@
 //! Supports sequential (Llama, GPT-2, Gemma, Qwen) and parallel (Phi) block styles.
 
 use crate::attention;
-use crate::config::{BlockStyle, ModelConfig, NormType};
+use crate::config::{ActivationQuantization, BlockStyle, ModelConfig, NormType};
 use crate::ffn;
 use crate::weights::Matrix;
 use nnx_core::engine::KVStore;
-use nnx_core::error::Result;
+use nnx_core::error::{EngineError, Result};
 
 /// Weights for one transformer block.
 pub struct BlockWeights {
@@ -188,6 +188,24 @@ fn apply_norm_batch(
     Ok(())
 }
 
+fn maybe_quantize_activations(
+    activations: &mut [f32],
+    rows: usize,
+    cols: usize,
+    mode: ActivationQuantization,
+) -> Result<()> {
+    match mode {
+        ActivationQuantization::None => Ok(()),
+        ActivationQuantization::Q8_0 => nnx_quant::encode::roundtrip_matrix_in_place(
+            activations,
+            rows,
+            cols,
+            nnx_quant::GGMLType::Q8_0,
+        )
+        .map_err(EngineError::Quantization),
+    }
+}
+
 /// Run a single transformer block on one token during decoding.
 ///
 /// Modifies `hidden` in-place (residual connections).
@@ -211,12 +229,19 @@ pub fn forward_block(
         &config.norm_type,
         config.rms_norm_eps,
     )?;
+    maybe_quantize_activations(&mut normed, 1, hidden_dim, config.activation_quantization)?;
 
     match config.block_style {
         BlockStyle::Sequential => {
             // Standard: attn -> residual -> norm -> ffn -> residual
-            let attn_out = attention::attention_decode_configurable(
+            let mut attn_out = attention::attention_decode_configurable(
                 &normed, weights, cache, position, config,
+            )?;
+            maybe_quantize_activations(
+                &mut attn_out,
+                1,
+                hidden_dim,
+                config.activation_quantization,
             )?;
             nnx_kernels::activations::add_f32_inplace(hidden, &attn_out);
 
@@ -229,16 +254,35 @@ pub fn forward_block(
                 &config.norm_type,
                 config.rms_norm_eps,
             )?;
+            maybe_quantize_activations(&mut normed, 1, hidden_dim, config.activation_quantization)?;
 
-            let ffn_out = ffn::ffn_forward(&normed, weights, config);
+            let mut ffn_out = ffn::ffn_forward(&normed, weights, config)?;
+            maybe_quantize_activations(
+                &mut ffn_out,
+                1,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
             nnx_kernels::activations::add_f32_inplace(hidden, &ffn_out);
         }
         BlockStyle::Parallel => {
             // Phi-style: attn and ffn both use the same normed input
-            let attn_out = attention::attention_decode_configurable(
+            let mut attn_out = attention::attention_decode_configurable(
                 &normed, weights, cache, position, config,
             )?;
-            let ffn_out = ffn::ffn_forward(&normed, weights, config);
+            let mut ffn_out = ffn::ffn_forward(&normed, weights, config)?;
+            maybe_quantize_activations(
+                &mut attn_out,
+                1,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
+            maybe_quantize_activations(
+                &mut ffn_out,
+                1,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
 
             nnx_kernels::activations::add_f32_inplace(hidden, &attn_out);
             nnx_kernels::activations::add_f32_inplace(hidden, &ffn_out);
@@ -268,16 +312,28 @@ pub fn forward_block_batch(
         &config.norm_type,
         config.rms_norm_eps,
     )?;
+    maybe_quantize_activations(
+        &mut normed,
+        batch_size,
+        hidden_dim,
+        config.activation_quantization,
+    )?;
 
     match config.block_style {
         BlockStyle::Sequential => {
-            let attn_out = attention::attention_prefill_batch_configurable(
+            let mut attn_out = attention::attention_prefill_batch_configurable(
                 &normed,
                 batch_size,
                 weights,
                 cache,
                 start_position,
                 config,
+            )?;
+            maybe_quantize_activations(
+                &mut attn_out,
+                batch_size,
+                hidden_dim,
+                config.activation_quantization,
             )?;
             nnx_kernels::activations::add_f32_inplace(hidden_batch, &attn_out);
 
@@ -290,12 +346,24 @@ pub fn forward_block_batch(
                 &config.norm_type,
                 config.rms_norm_eps,
             )?;
+            maybe_quantize_activations(
+                &mut normed,
+                batch_size,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
 
-            let ffn_out = ffn::ffn_forward_batch(&normed, batch_size, weights, config);
+            let mut ffn_out = ffn::ffn_forward_batch(&normed, batch_size, weights, config)?;
+            maybe_quantize_activations(
+                &mut ffn_out,
+                batch_size,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
             nnx_kernels::activations::add_f32_inplace(hidden_batch, &ffn_out);
         }
         BlockStyle::Parallel => {
-            let attn_out = attention::attention_prefill_batch_configurable(
+            let mut attn_out = attention::attention_prefill_batch_configurable(
                 &normed,
                 batch_size,
                 weights,
@@ -303,7 +371,19 @@ pub fn forward_block_batch(
                 start_position,
                 config,
             )?;
-            let ffn_out = ffn::ffn_forward_batch(&normed, batch_size, weights, config);
+            let mut ffn_out = ffn::ffn_forward_batch(&normed, batch_size, weights, config)?;
+            maybe_quantize_activations(
+                &mut attn_out,
+                batch_size,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
+            maybe_quantize_activations(
+                &mut ffn_out,
+                batch_size,
+                hidden_dim,
+                config.activation_quantization,
+            )?;
 
             nnx_kernels::activations::add_f32_inplace(hidden_batch, &attn_out);
             nnx_kernels::activations::add_f32_inplace(hidden_batch, &ffn_out);
@@ -380,6 +460,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: true,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let weights = BlockWeights::test_with_bias(
@@ -431,6 +512,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: true,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let weights = BlockWeights::test_with_bias(
@@ -479,6 +561,7 @@ mod tests {
             has_qkv_bias: false,
             has_output_bias: false,
             embedding_scale: Some((8.0f32).sqrt()),
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let weights = BlockWeights::test_no_bias(
@@ -527,6 +610,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: false,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let q_dim = num_heads * head_dim;

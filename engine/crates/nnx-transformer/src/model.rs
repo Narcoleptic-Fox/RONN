@@ -4,7 +4,7 @@
 
 use crate::block::{self, BlockWeights};
 use crate::cache::KVCache;
-use crate::config::{ModelConfig, NormType};
+use crate::config::{ActivationQuantization, ModelConfig, NormType};
 use crate::weights::Matrix;
 use nnx_core::error::{EngineError, Result};
 
@@ -69,6 +69,7 @@ impl Model {
                 *v *= scale;
             }
         }
+        maybe_quantize_activations(&mut hidden, 1, cfg.hidden_dim, cfg.activation_quantization)?;
 
         let mut layer_features = Vec::new();
 
@@ -109,6 +110,7 @@ impl Model {
                 )?;
             }
         }
+        maybe_quantize_activations(&mut normed, 1, cfg.hidden_dim, cfg.activation_quantization)?;
 
         // 4. LM head: project to vocab
         let mut logits = vec![0.0f32; cfg.vocab_size];
@@ -175,6 +177,12 @@ impl Model {
                 }
             }
         }
+        maybe_quantize_activations(
+            &mut hidden_batch,
+            batch_size,
+            cfg.hidden_dim,
+            cfg.activation_quantization,
+        )?;
 
         let mut last_features = Vec::new();
         for layer_idx in 0..cfg.num_layers {
@@ -220,6 +228,7 @@ impl Model {
                 )?;
             }
         }
+        maybe_quantize_activations(&mut normed, 1, cfg.hidden_dim, cfg.activation_quantization)?;
 
         let mut logits = vec![0.0f32; cfg.vocab_size];
         self.weights.lm_head.matvec(&normed, &mut logits);
@@ -247,6 +256,24 @@ impl Model {
             *dst += *src;
         }
         Ok(())
+    }
+}
+
+fn maybe_quantize_activations(
+    activations: &mut [f32],
+    rows: usize,
+    cols: usize,
+    mode: ActivationQuantization,
+) -> Result<()> {
+    match mode {
+        ActivationQuantization::None => Ok(()),
+        ActivationQuantization::Q8_0 => nnx_quant::encode::roundtrip_matrix_in_place(
+            activations,
+            rows,
+            cols,
+            nnx_quant::GGMLType::Q8_0,
+        )
+        .map_err(EngineError::Quantization),
     }
 }
 
@@ -374,6 +401,7 @@ mod tests {
             has_qkv_bias,
             has_output_bias,
             embedding_scale,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let make_layer = || {
@@ -588,6 +616,7 @@ mod tests {
             has_qkv_bias: true,
             has_output_bias: true,
             embedding_scale: None,
+            activation_quantization: crate::config::ActivationQuantization::None,
         };
 
         let build_model = |position_row0: Vec<f32>| {
@@ -753,5 +782,50 @@ mod tests {
             assert!((batch_logit - sequential_logit).abs() < 1e-4);
         }
         assert_eq!(batch_cache.position(), sequential_cache.position());
+    }
+
+    #[test]
+    fn test_forward_token_activation_quantized_matches_dense_closely() {
+        let dense_model = tiny_model();
+        let mut quantized_model = tiny_model();
+        quantized_model.config.activation_quantization =
+            crate::config::ActivationQuantization::Q8_0;
+
+        let mut dense_cache = dense_model.new_cache();
+        let mut quantized_cache = quantized_model.new_cache();
+        let dense_logits = dense_model.forward_token(&mut dense_cache, 7).unwrap();
+        let quantized_logits = quantized_model
+            .forward_token(&mut quantized_cache, 7)
+            .unwrap();
+
+        let max_abs = dense_logits
+            .iter()
+            .zip(quantized_logits.iter())
+            .map(|(lhs, rhs)| (lhs - rhs).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_abs < 0.05, "activation-quantized drift too large: {max_abs}");
+    }
+
+    #[test]
+    fn test_forward_batch_activation_quantized_matches_dense_closely() {
+        let dense_model = tiny_model();
+        let mut quantized_model = tiny_model();
+        quantized_model.config.activation_quantization =
+            crate::config::ActivationQuantization::Q8_0;
+
+        let tokens = [1, 5, 10];
+        let mut dense_cache = dense_model.new_cache();
+        let mut quantized_cache = quantized_model.new_cache();
+        let dense_logits = dense_model.forward_batch(&mut dense_cache, &tokens).unwrap();
+        let quantized_logits = quantized_model
+            .forward_batch(&mut quantized_cache, &tokens)
+            .unwrap();
+
+        let max_abs = dense_logits
+            .iter()
+            .zip(quantized_logits.iter())
+            .map(|(lhs, rhs)| (lhs - rhs).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_abs < 0.05, "batched activation-quantized drift too large: {max_abs}");
     }
 }

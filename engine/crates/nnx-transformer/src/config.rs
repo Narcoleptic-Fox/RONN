@@ -86,6 +86,16 @@ pub enum FFNType {
     GeGLU,
 }
 
+/// Optional activation quantization applied to FFN intermediate buffers.
+#[derive(Debug, Clone, PartialEq, Copy, Default)]
+pub enum ActivationQuantization {
+    /// Keep activations fully dense.
+    #[default]
+    None,
+    /// Quantize FFN intermediates as GGML Q8_0 before the next projection.
+    Q8_0,
+}
+
 /// Position encoding strategy.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PosEncoding {
@@ -427,6 +437,8 @@ pub struct ModelConfig {
     pub has_output_bias: bool,
     /// Gemma scales embeddings by sqrt(hidden_dim). None for other architectures.
     pub embedding_scale: Option<f32>,
+    /// Optional activation quantization for FFN intermediate buffers.
+    pub activation_quantization: ActivationQuantization,
 }
 
 impl ModelConfig {
@@ -515,6 +527,7 @@ impl ModelConfig {
             has_qkv_bias: profile.has_qkv_bias,
             has_output_bias: profile.has_output_bias,
             embedding_scale,
+            activation_quantization: ActivationQuantization::None,
         };
         config.validate()?;
         Ok(config)
@@ -704,6 +717,7 @@ impl ModelConfig {
             has_qkv_bias: false,
             has_output_bias: false,
             embedding_scale: None,
+            activation_quantization: ActivationQuantization::None,
         }
     }
 }
@@ -826,6 +840,7 @@ mod tests {
                 } else {
                     None
                 },
+                activation_quantization: ActivationQuantization::None,
             };
             config.validate_support().unwrap_or_else(|e| {
                 panic!("profile '{}' failed validate_support: {}", profile.name, e)

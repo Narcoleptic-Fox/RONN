@@ -21,7 +21,9 @@
 pub mod metadata;
 pub mod parser;
 pub mod types;
+pub mod writer;
 
 pub use metadata::GGUFMetadata;
 pub use parser::GGUFFile;
-pub use types::GGUFValueType;
+pub use types::{GGUFTensorInfo, GGUFValue, GGUFValueType};
+pub use writer::{GGUFWriterTensor, write_gguf_bytes, write_gguf_file};

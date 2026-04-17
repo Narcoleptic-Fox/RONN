@@ -4,11 +4,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "Quantization formats and dequantization kernels for NNX"
+description = "Quantization formats, matrix encoders, and dequantization kernels for NNX"
 
 [dependencies]
 nnx-core = { path = "../nnx-core" }
 half.workspace = true
+clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
 proptest.workspace = true

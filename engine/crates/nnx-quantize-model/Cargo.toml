@@ -1,0 +1,20 @@
+[package]
+name = "nnx-quantize-model"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Checkpoint conversion CLI for quantizing SafeTensors models into GGUF"
+
+[dependencies]
+nnx-core = { path = "../nnx-core" }
+nnx-gguf = { path = "../nnx-gguf" }
+nnx-quant = { path = "../nnx-quant" }
+nnx-safetensors = { path = "../nnx-safetensors" }
+nnx-transformer = { path = "../nnx-transformer" }
+clap = { version = "4.5", features = ["derive"] }
+half.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

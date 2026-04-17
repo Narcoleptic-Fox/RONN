@@ -6,16 +6,17 @@ RONN) can build upon.
 
 ## Crate Overview
 
-| Crate | Purpose |
-|---|---|
-| `nnx-core` | Core types: tensor, dtype, device, error, and the `InferenceEngine` trait |
-| `nnx-gguf` | GGUF file format parser with memory-mapped loading |
-| `nnx-safetensors` | SafeTensors weight loading |
-| `nnx-onnx` | ONNX model/graph loading |
-| `nnx-ggml` | Legacy GGML format loading (optional) |
-| `nnx-quant` | Quantization block types and dequantization kernels |
-| `nnx-kernels` | Optimized compute: matmul, softmax, RMSNorm, RoPE, SIMD |
-| `nnx-transformer` | Transformer architecture: attention, FFN, full model forward pass |
+| Crate                | Purpose                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `nnx-core`           | Core types: tensor, dtype, device, error, and the `InferenceEngine` trait          |
+| `nnx-gguf`           | GGUF file format parser with memory-mapped loading                                 |
+| `nnx-safetensors`    | SafeTensors weight loading                                                         |
+| `nnx-onnx`           | ONNX model/graph loading                                                           |
+| `nnx-ggml`           | Legacy GGML format loading (optional)                                              |
+| `nnx-quant`          | Quantization block types, matrix encoders, dequantization kernels, and CLI tooling |
+| `nnx-quantize-model` | SafeTensors-to-GGUF checkpoint conversion CLI with matrix quantization             |
+| `nnx-kernels`        | Optimized compute: matmul, softmax, RMSNorm, RoPE, SIMD                            |
+| `nnx-transformer`    | Transformer architecture: attention, FFN, full model forward pass                  |
 
 ## Design Principles
 

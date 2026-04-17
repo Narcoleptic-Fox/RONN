@@ -1,25 +1,23 @@
 [package]
-name = "nnx-onnx"
+name = "nnx-serving-async"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "ONNX model loading for NNX"
+description = "Async token-streaming wrapper over the synchronous NNX serving engine"
 
 [dependencies]
 nnx-core = { path = "../nnx-core" }
+nnx-serving = { path = "../nnx-serving" }
 nnx-transformer = { path = "../nnx-transformer" }
-prost.workspace = true
-half.workspace = true
-thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
-
-[build-dependencies]
-prost-build = "0.13"
-protox = "0.7"
+thiserror.workspace = true
+futures = "0.3"
+tokio-stream = "0.1"
 
 [dev-dependencies]
-proptest.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true
